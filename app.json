@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "USTP Campus Navigator",
+    "slug": "ustp-campus-navigator",
+    "scheme": "ustpcampus",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      "expo-location",
+      [
+        "react-native-maps",
+        {
+          "androidGoogleMapsApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+        }
+      ],
+      "expo-status-bar"
+    ],
+    "android": {
+      "package": "com.shem.ustpcampusnavigator"
+    },
+    "ios": {
+      "bundleIdentifier": "com.shem.ustpcampusnavigator"
+    }
+  }
+}
