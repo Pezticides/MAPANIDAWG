@@ -66,4 +66,28 @@ export const campusLocations: CampusLocation[] = [
     latitude: 8.485942,
     longitude: 124.657316,
   },
+  {
+      id: 'lrc-building',
+      name: 'LRC Building 24',
+      category: 'Academic',
+      description: 'Learning Resource Center (LRC), USTP CDO.',
+      latitude: 8.486630,
+      longitude: 124.655804,
+  },
+  {
+        id: 'medical-building',
+        name: 'Medical Building',
+        category: 'Facility',
+        description: 'Clinic, USTP CDO.',
+        latitude: 8.486077,
+        longitude: 124.655630,
+  },
+  {
+          id: 'memorial-hall',
+          name: 'Memorial Hall',
+          category: 'Facility',
+          description: 'Dr. Ricardo E. Rotoras, USTP CDO.',
+          latitude: 8.485842,
+          longitude: 124.656440,
+  },
 ];
