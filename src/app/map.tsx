@@ -16,6 +16,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  getWalkingRoute,
+  type WalkingRoute,
+} from '../lib/walkingDirections';
 
 import {
   CAMPUS_CENTER,
@@ -90,6 +94,7 @@ function createMapHtml() {
   let tileLayer;
   let markers = [];
   let userMarker = null;
+  let walkingRouteLayer = null;
 
   function setBaseLayer(type) {
     if (tileLayer) map.removeLayer(tileLayer);
@@ -185,10 +190,50 @@ function createMapHtml() {
     focusLocation(lat, lng, 18);
   }
 
+  function drawWalkingRoute(coordinates) {
+    if (walkingRouteLayer) {
+      map.removeLayer(walkingRouteLayer);
+      walkingRouteLayer = null;
+    }
+
+    if (!coordinates || coordinates.length < 2) return;
+
+    const points = coordinates.map(point => [
+      point.latitude,
+      point.longitude
+    ]);
+
+    walkingRouteLayer = L.polyline(points, {
+      color: '#1A73E8',
+      weight: 7,
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round'
+    }).addTo(map);
+
+    map.fitBounds(walkingRouteLayer.getBounds(), {
+      padding: [45, 45],
+      maxZoom: 19
+    });
+  }
+
+  function clearWalkingRoute() {
+    if (!walkingRouteLayer) return;
+
+    map.removeLayer(walkingRouteLayer);
+    walkingRouteLayer = null;
+  }
+
   map.on('click', () => {
     sendMessage({ type: 'mapPress' });
   });
 
+  window.setCampusData = setCampusData;
+  window.focusLocation = focusLocation;
+  window.showUserLocation = showUserLocation;
+  window.setBaseLayer = setBaseLayer;
+  window.drawWalkingRoute = drawWalkingRoute;
+  window.clearWalkingRoute = clearWalkingRoute;
   window.setCampusData = setCampusData;
   window.focusLocation = focusLocation;
   window.showUserLocation = showUserLocation;
@@ -215,6 +260,10 @@ export default function CampusMapScreen() {
   const [currentProfile, setCurrentProfile] = useState<LocalProfile | null>(null);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [savedLoaded, setSavedLoaded] = useState(false);
+  const [walkingRoute, setWalkingRoute] =
+    useState<WalkingRoute | null>(null);
+
+  const [routeLoading, setRouteLoading] = useState(false);
 
   const mapHtml = useMemo(() => createMapHtml(), []);
 
@@ -316,6 +365,26 @@ export default function CampusMapScreen() {
     );
   }, [baseLayer, mapReady]);
 
+  // Draw or remove the walking route on the Leaflet map.
+  useEffect(() => {
+    if (!mapReady) return;
+
+    if (!walkingRoute) {
+      mapRef.current?.injectJavaScript(
+        'window.clearWalkingRoute(); true;'
+      );
+      return;
+    }
+
+    const coordinatesJson = JSON.stringify(
+      walkingRoute.coordinates
+    ).replace(/</g, '\\u003c');
+
+    mapRef.current?.injectJavaScript(
+      `window.drawWalkingRoute(${coordinatesJson}); true;`
+    );
+  }, [walkingRoute, mapReady]);
+
   async function toggleSaved(placeId: string | number) {
     if (!savedLoaded) {
       Alert.alert('Please wait', 'Saved locations are still loading.');
@@ -345,6 +414,7 @@ export default function CampusMapScreen() {
   }
 
   function focusLocation(place: (typeof campusLocations)[number]) {
+    setWalkingRoute(null);
     setSelected(place);
     setQuery('');
     Keyboard.dismiss();
@@ -385,18 +455,68 @@ export default function CampusMapScreen() {
     }
   }
 
-  function openDirections() {
-    if (!selected) return;
+  async function openDirections() {
+    if (!selected || routeLoading) return;
 
-    const destination =
-      `${selected.latitude},${selected.longitude}`;
+    try {
+      setRouteLoading(true);
 
-    const url =
-      `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
+      // Request permission to access the user's location.
+      const permission =
+        await Location.requestForegroundPermissionsAsync();
 
-    Linking.openURL(url).catch(() => {
-      Alert.alert('Error', 'Could not open directions.');
-    });
+      if (!permission.granted) {
+        Alert.alert(
+          'Location permission required',
+          'Allow location access to calculate your walking route.'
+        );
+        return;
+      }
+
+      // Get the user's current GPS position.
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const start = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      };
+
+      // Destination is the selected campus location.
+      const destination = {
+        latitude: selected.latitude,
+        longitude: selected.longitude,
+      };
+
+      // Show the user's current location on the map.
+      mapRef.current?.injectJavaScript(
+        `window.showUserLocation(
+          ${start.latitude},
+          ${start.longitude}
+        ); true;`
+      );
+
+      // Request a pedestrian route.
+      const route = await getWalkingRoute(
+        start,
+        destination
+      );
+
+      setWalkingRoute(route);
+
+    } catch (error) {
+      console.error('Walking route error:', error);
+
+      Alert.alert(
+        'Unable to calculate route',
+        error instanceof Error
+          ? error.message
+          : 'Please check your internet connection and try again.'
+      );
+    } finally {
+      setRouteLoading(false);
+    }
   }
 
   function openSavedLocations() {
@@ -424,12 +544,17 @@ export default function CampusMapScreen() {
           item => String(item.id) === String(message.id)
         );
 
-        if (place) setSelected(place);
+        if (place) {
+          setWalkingRoute(null);
+          setSelected(place);
+        }
       }
 
       if (message.type === 'mapPress') {
         setSelected(null);
       }
+
+      
     } catch (error) {
       console.error('Map message error:', error);
     }
@@ -641,11 +766,61 @@ export default function CampusMapScreen() {
             <Text style={styles.description}>
               {selected.description}
             </Text>
+            {walkingRoute && (
+  <View style={styles.routeSummary}>
+    <View style={styles.routeInfo}>
+      <Ionicons
+        name="walk"
+        size={21}
+        color={BLUE}
+      />
+
+      <View>
+        <Text style={styles.routeValue}>
+          {(walkingRoute.distance / 1000).toFixed(2)} km
+        </Text>
+
+        <Text style={styles.routeLabel}>
+          Walking distance
+        </Text>
+      </View>
+    </View>
+
+    <View style={styles.routeInfo}>
+      <Ionicons
+        name="time-outline"
+        size={21}
+        color={BLUE}
+      />
+
+      <View>
+        <Text style={styles.routeValue}>
+          {Math.ceil(walkingRoute.duration / 60)} min
+        </Text>
+
+        <Text style={styles.routeLabel}>
+          Estimated walking time
+        </Text>
+      </View>
+    </View>
+
+    <Pressable
+      onPress={() => setWalkingRoute(null)}
+    >
+      <Ionicons
+        name="close-circle"
+        size={23}
+        color="#8793A1"
+      />
+    </Pressable>
+  </View>
+)}
 
             <View style={styles.actions}>
               <Pressable
                 style={styles.directionsButton}
                 onPress={openDirections}
+                disabled={routeLoading}
               >
                 <Ionicons
                   name="navigate"
@@ -654,7 +829,11 @@ export default function CampusMapScreen() {
                 />
 
                 <Text style={styles.directionsText}>
-                  Directions
+                  {routeLoading
+                    ? 'Finding Route...'
+                    : walkingRoute
+                      ? 'Refresh Route'
+                      : 'Walking Route'}
                 </Text>
               </Pressable>
 
@@ -1226,4 +1405,32 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#A0AAB6',
   },
+
+  routeSummary: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  backgroundColor: '#EAF2FF',
+  borderRadius: 14,
+  padding: 12,
+  marginTop: 13,
+},
+
+routeInfo: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 8,
+},
+
+routeValue: {
+  fontSize: 14,
+  fontWeight: '800',
+  color: '#1D2D40',
+},
+
+routeLabel: {
+  fontSize: 10,
+  color: '#718096',
+  marginTop: 2,
+},
 });
