@@ -1,5 +1,4 @@
-
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -14,7 +13,7 @@ import {
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -23,8 +22,15 @@ import {
   campusLocations,
 } from '../../data/campusLocations';
 
+import {
+  getCurrentProfile,
+  getSavedLocationsKey,
+  LocalProfile,
+  signOutLocalProfile,
+} from '../lib/localProfile';
+
 const BLUE = '#1A73E8';
-const STORAGE_KEY = 'ustp_saved_locations';
+const LEGACY_STORAGE_KEY = 'ustp_saved_locations';
 
 const categories = ['All', 'Academic', 'Office', 'Food', 'Facility'];
 
@@ -206,17 +212,56 @@ export default function CampusMapScreen() {
   const [baseLayer, setBaseLayer] = useState<'osm' | 'carto'>('osm');
 
   const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [currentProfile, setCurrentProfile] = useState<LocalProfile | null>(null);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [savedLoaded, setSavedLoaded] = useState(false);
 
   const mapHtml = useMemo(() => createMapHtml(), []);
 
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      getCurrentProfile()
+        .then(profile => {
+          if (active) setCurrentProfile(profile);
+        })
+        .catch(error => {
+          console.error('Could not refresh local profile:', error);
+        });
+
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
+
   useEffect(() => {
     async function loadSavedLocations() {
       try {
-        const stored = await AsyncStorage.getItem(STORAGE_KEY);
+        const profile = await getCurrentProfile();
+        setCurrentProfile(profile);
+
+        const storageKey = profile
+          ? getSavedLocationsKey(profile.email)
+          : LEGACY_STORAGE_KEY;
+
+        let stored = await AsyncStorage.getItem(storageKey);
+
+        // Keep saved places from the earlier single-profile version when possible.
+        if (!stored && profile) {
+          const legacySaved = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
+
+          if (legacySaved) {
+            stored = legacySaved;
+            await AsyncStorage.setItem(storageKey, legacySaved);
+            await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+          }
+        }
+
         if (stored) {
           const parsed: unknown = JSON.parse(stored);
+
           if (Array.isArray(parsed)) {
             setSavedIds(parsed.map(String));
           }
@@ -233,7 +278,7 @@ export default function CampusMapScreen() {
   }, []);
 
   const filtered = useMemo(() => {
-    return campusLocations.filter((place) => {
+    return campusLocations.filter(place => {
       const matchesCategory =
         category === 'All' || place.category === category;
 
@@ -253,6 +298,7 @@ export default function CampusMapScreen() {
     if (!mapReady) return;
 
     const data = JSON.stringify(filtered).replace(/</g, '\\u003c');
+
     const selectedId = JSON.stringify(
       selected ? String(selected.id) : null
     );
@@ -286,7 +332,11 @@ export default function CampusMapScreen() {
     setSavedIds(updated);
 
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      const storageKey = currentProfile
+        ? getSavedLocationsKey(currentProfile.email)
+        : LEGACY_STORAGE_KEY;
+
+      await AsyncStorage.setItem(storageKey, JSON.stringify(updated));
     } catch (error) {
       setSavedIds(previous);
       console.error('Could not save location:', error);
@@ -327,6 +377,7 @@ export default function CampusMapScreen() {
       );
     } catch (error) {
       console.error('Location error:', error);
+
       Alert.alert(
         'Location unavailable',
         'Check your device location settings and try again.'
@@ -337,7 +388,9 @@ export default function CampusMapScreen() {
   function openDirections() {
     if (!selected) return;
 
-    const destination = `${selected.latitude},${selected.longitude}`;
+    const destination =
+      `${selected.latitude},${selected.longitude}`;
+
     const url =
       `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
 
@@ -414,6 +467,7 @@ export default function CampusMapScreen() {
 
           <View style={styles.searchBox}>
             <Ionicons name="search" size={20} color="#68778D" />
+
             <TextInput
               style={styles.searchInput}
               placeholder={
@@ -450,14 +504,23 @@ export default function CampusMapScreen() {
                   onPress={() => focusLocation(place)}
                 >
                   <Ionicons name="location" size={21} color={BLUE} />
+
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.resultName}>{place.name}</Text>
+                    <Text style={styles.resultName}>
+                      {place.name}
+                    </Text>
+
                     <Text style={styles.resultCategory}>
                       {place.category}
                     </Text>
                   </View>
+
                   {savedIds.includes(String(place.id)) && (
-                    <Ionicons name="bookmark" size={18} color={BLUE} />
+                    <Ionicons
+                      name="bookmark"
+                      size={18}
+                      color={BLUE}
+                    />
                   )}
                 </Pressable>
               ))}
@@ -473,17 +536,26 @@ export default function CampusMapScreen() {
 
         {/* MAP CONTROLS */}
         <View style={styles.mapControls}>
-          <Pressable style={styles.iconButton} onPress={locateMe}>
+          <Pressable
+            style={styles.iconButton}
+            onPress={locateMe}
+          >
             <Ionicons name="locate" size={23} color={BLUE} />
           </Pressable>
 
           <Pressable
             style={styles.iconButton}
             onPress={() =>
-              setBaseLayer(current => current === 'osm' ? 'carto' : 'osm')
+              setBaseLayer(current =>
+                current === 'osm' ? 'carto' : 'osm'
+              )
             }
           >
-            <Ionicons name="layers-outline" size={23} color="#263746" />
+            <Ionicons
+              name="layers-outline"
+              size={23}
+              color="#263746"
+            />
           </Pressable>
         </View>
 
@@ -522,9 +594,11 @@ export default function CampusMapScreen() {
         {showSavedOnly && (
           <View style={styles.savedBanner}>
             <Ionicons name="bookmark" size={18} color={BLUE} />
+
             <Text style={styles.savedBannerText}>
               Saved Locations ({filtered.length})
             </Text>
+
             <Pressable onPress={showAllLocations}>
               <Text style={styles.showAllText}>Show All</Text>
             </Pressable>
@@ -538,18 +612,29 @@ export default function CampusMapScreen() {
 
             <View style={styles.placeHeader}>
               <View style={styles.placeIcon}>
-                <Ionicons name="location" size={24} color={BLUE} />
+                <Ionicons
+                  name="location"
+                  size={24}
+                  color={BLUE}
+                />
               </View>
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.placeName}>{selected.name}</Text>
+                <Text style={styles.placeName}>
+                  {selected.name}
+                </Text>
+
                 <Text style={styles.placeCategory}>
                   {selected.category} · USTP CDO
                 </Text>
               </View>
 
               <Pressable onPress={() => setSelected(null)}>
-                <Ionicons name="close" size={23} color="#718096" />
+                <Ionicons
+                  name="close"
+                  size={23}
+                  color="#718096"
+                />
               </Pressable>
             </View>
 
@@ -562,8 +647,15 @@ export default function CampusMapScreen() {
                 style={styles.directionsButton}
                 onPress={openDirections}
               >
-                <Ionicons name="navigate" size={19} color="#FFFFFF" />
-                <Text style={styles.directionsText}>Directions</Text>
+                <Ionicons
+                  name="navigate"
+                  size={19}
+                  color="#FFFFFF"
+                />
+
+                <Text style={styles.directionsText}>
+                  Directions
+                </Text>
               </Pressable>
 
               <Pressable
@@ -579,8 +671,11 @@ export default function CampusMapScreen() {
                   size={19}
                   color={BLUE}
                 />
+
                 <Text style={styles.saveText}>
-                  {savedIds.includes(String(selected.id)) ? 'Saved' : 'Save'}
+                  {savedIds.includes(String(selected.id))
+                    ? 'Saved'
+                    : 'Save'}
                 </Text>
               </Pressable>
             </View>
@@ -597,12 +692,76 @@ export default function CampusMapScreen() {
 
             <View style={styles.drawer}>
               <View style={styles.drawerHeader}>
-                <View style={styles.drawerLogo}>
-                  <Ionicons name="school" size={27} color="#FFFFFF" />
+                <View style={styles.drawerBrandRow}>
+                  <View style={styles.drawerLogo}>
+                    <Ionicons
+                      name="school"
+                      size={27}
+                      color="#FFFFFF"
+                    />
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.drawerTitle}>
+                      USTP CDO
+                    </Text>
+
+                    <Text style={styles.drawerSubtitle}>
+                      CAMPUS NAVIGATOR
+                    </Text>
+                  </View>
                 </View>
-                <Text style={styles.drawerTitle}>USTP CDO</Text>
-                <Text style={styles.drawerSubtitle}>CAMPUS NAVIGATOR</Text>
+
+                <Pressable
+                  style={styles.drawerProfileRow}
+                  onPress={() => {
+                    setDrawerOpen(false);
+                    router.push('/profile');
+                  }}
+                >
+                  <View style={styles.drawerAvatar}>
+                    <Text style={styles.drawerAvatarText}>
+                      {(currentProfile?.name || 'Guest')
+                        .trim()
+                        .split(/\s+/)
+                        .slice(0, 2)
+                        .map(part => part[0]?.toUpperCase() ?? '')
+                        .join('') || 'U'}
+                    </Text>
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={styles.drawerProfileName}
+                      numberOfLines={1}
+                    >
+                      {currentProfile?.name ?? 'Local profile'}
+                    </Text>
+
+                    <Text
+                      style={styles.drawerProfileEmail}
+                      numberOfLines={1}
+                    >
+                      {currentProfile?.email ?? 'Tap to set up your profile'}
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color="#718096"
+                  />
+                </Pressable>
               </View>
+
+              <DrawerItem
+                icon="person-circle-outline"
+                label="My Profile"
+                onPress={() => {
+                  setDrawerOpen(false);
+                  router.push('/profile');
+                }}
+              />
 
               <DrawerItem
                 icon="map-outline"
@@ -645,6 +804,7 @@ export default function CampusMapScreen() {
                 label="About USTP"
                 onPress={() => {
                   setDrawerOpen(false);
+
                   Alert.alert(
                     'About USTP',
                     'USTP CDO Campus Navigator helps students and visitors explore campus locations, find buildings, and get directions.'
@@ -657,6 +817,7 @@ export default function CampusMapScreen() {
                 label="Settings"
                 onPress={() => {
                   setDrawerOpen(false);
+
                   Alert.alert(
                     'Settings',
                     'More settings will be added in a future update.'
@@ -671,7 +832,32 @@ export default function CampusMapScreen() {
                 label="Sign Out"
                 onPress={() => {
                   setDrawerOpen(false);
-                  router.replace('/');
+
+                  Alert.alert(
+                    'Sign out?',
+                    'Your local profile will remain saved on this device.',
+                    [
+                      {
+                        text: 'Cancel',
+                        style: 'cancel',
+                      },
+                      {
+                        text: 'Sign Out',
+                        style: 'destructive',
+                        onPress: async () => {
+                          try {
+                            await signOutLocalProfile();
+                            router.replace('/');
+                          } catch {
+                            Alert.alert(
+                              'Could not sign out',
+                              'Please try again.'
+                            );
+                          }
+                        },
+                      },
+                    ]
+                  );
                 }}
               />
 
@@ -696,9 +882,19 @@ function DrawerItem({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={styles.drawerItem} onPress={onPress}>
-      <Ionicons name={icon} size={22} color="#526174" />
-      <Text style={styles.drawerLabel}>{label}</Text>
+    <Pressable
+      style={styles.drawerItem}
+      onPress={onPress}
+    >
+      <Ionicons
+        name={icon}
+        size={22}
+        color="#526174"
+      />
+
+      <Text style={styles.drawerLabel}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -946,6 +1142,12 @@ const styles = StyleSheet.create({
     padding: 18,
     marginBottom: 17,
   },
+  drawerBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+  },
   drawerLogo: {
     width: 47,
     height: 47,
@@ -953,7 +1155,40 @@ const styles = StyleSheet.create({
     backgroundColor: BLUE,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+  },
+  drawerProfileRow: {
+    minHeight: 62,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#DCE7F5',
+  },
+  drawerAvatar: {
+    width: 39,
+    height: 39,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D5E4F8',
+  },
+  drawerAvatarText: {
+    color: BLUE,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  drawerProfileName: {
+    color: '#172B4D',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  drawerProfileEmail: {
+    color: '#718096',
+    fontSize: 10,
+    marginTop: 3,
   },
   drawerTitle: {
     fontSize: 19,
