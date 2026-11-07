@@ -9,6 +9,7 @@ export type WalkingStep = {
   distance: number;
   duration: number;
   type: number;
+  wayPoints: [number, number];
 };
 
 export type WalkingRoute = {
@@ -96,6 +97,10 @@ export async function getWalkingRoute(
         distance: step.distance,
         duration: step.duration,
         type: step.type,
+        wayPoints: [
+          step.way_points?.[0] ?? 0,
+          step.way_points?.[1] ?? 0,
+        ] as [number, number],
       }))
     );
 

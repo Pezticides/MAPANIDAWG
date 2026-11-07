@@ -7,8 +7,8 @@ import {
   ScrollView,
   StyleSheet,
   Alert,
-  Linking,
   Keyboard,
+  PanResponder,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
@@ -20,6 +20,8 @@ import {
   getWalkingRoute,
   type WalkingRoute,
 } from '../lib/walkingDirections';
+
+import * as Speech from 'expo-speech';
 
 import {
   CAMPUS_CENTER,
@@ -36,7 +38,89 @@ import {
 const BLUE = '#1A73E8';
 const LEGACY_STORAGE_KEY = 'ustp_saved_locations';
 
-const categories = ['All', 'Academic', 'Office', 'Food', 'Facility'];
+  type Coordinates = {
+    latitude: number;
+    longitude: number;
+  };
+
+  function calculateDistanceMeters(
+    a: Coordinates,
+    b: Coordinates
+  ): number {
+    const earthRadius = 6371000;
+
+    const toRadians = (value: number) =>
+      (value * Math.PI) / 180;
+
+    const lat1 = toRadians(a.latitude);
+    const lat2 = toRadians(b.latitude);
+
+    const deltaLat = toRadians(b.latitude - a.latitude);
+    const deltaLon = toRadians(b.longitude - a.longitude);
+
+    const value =
+      Math.sin(deltaLat / 2) ** 2 +
+      Math.cos(lat1) *
+        Math.cos(lat2) *
+        Math.sin(deltaLon / 2) ** 2;
+
+    return earthRadius *
+      2 *
+      Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+  }
+
+  function findNearestRoutePoint(
+    position: Coordinates,
+    route: WalkingRoute
+  ) {
+    let nearestIndex = 0;
+    let nearestDistance = Infinity;
+
+    route.coordinates.forEach((point, index) => {
+      const distance = calculateDistanceMeters(
+        position,
+        point
+      );
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    return {
+      index: nearestIndex,
+      distance: nearestDistance,
+    };
+  }
+
+  function calculateRemainingDistance(
+    route: WalkingRoute,
+    startIndex: number
+  ): number {
+    let total = 0;
+
+    for (
+      let index = startIndex;
+      index < route.coordinates.length - 1;
+      index++
+    ) {
+      total += calculateDistanceMeters(
+        route.coordinates[index],
+        route.coordinates[index + 1]
+      );
+    }
+
+    return total;
+  }
+
+  function formatDistance(distance: number): string {
+    if (distance >= 1000) {
+      return `${(distance / 1000).toFixed(2)} km`;
+    }
+
+    return `${Math.round(distance)} m`;
+  }
 
 // Leaflet + OpenStreetMap. No Google Maps API key required.
 function createMapHtml() {
@@ -190,6 +274,31 @@ function createMapHtml() {
     focusLocation(lat, lng, 18);
   }
 
+  function updateUserLocation(lat, lng, follow) {
+    const position = [lat, lng];
+
+    if (!userMarker) {
+      userMarker = L.circleMarker(position, {
+        radius: 8,
+        color: '#ffffff',
+        weight: 3,
+        fillColor: '#4285F4',
+        fillOpacity: 1
+      }).addTo(map);
+
+      userMarker.bindPopup('Your location');
+    } else {
+      userMarker.setLatLng(position);
+    }
+
+    if (follow) {
+      map.panTo(position, {
+        animate: true,
+        duration: 0.3
+      });
+    }
+  }
+
   function drawWalkingRoute(coordinates) {
     if (walkingRouteLayer) {
       map.removeLayer(walkingRouteLayer);
@@ -232,12 +341,9 @@ function createMapHtml() {
   window.focusLocation = focusLocation;
   window.showUserLocation = showUserLocation;
   window.setBaseLayer = setBaseLayer;
+  window.updateUserLocation = updateUserLocation;
   window.drawWalkingRoute = drawWalkingRoute;
   window.clearWalkingRoute = clearWalkingRoute;
-  window.setCampusData = setCampusData;
-  window.focusLocation = focusLocation;
-  window.showUserLocation = showUserLocation;
-  window.setBaseLayer = setBaseLayer;
 
   setCampusData(initialLocations, null);
 </script>
@@ -246,7 +352,8 @@ function createMapHtml() {
 }
 
 export default function CampusMapScreen() {
-  const mapRef = useRef<WebView>(null);
+  const mapRef = useRef<WebView<unknown>>(null);
+
 
   const [mapReady, setMapReady] = useState(false);
   const [query, setQuery] = useState('');
@@ -264,8 +371,308 @@ export default function CampusMapScreen() {
     useState<WalkingRoute | null>(null);
 
   const [routeLoading, setRouteLoading] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [isRerouting, setIsRerouting] = useState(false);
+
+  const [activeStepIndex, setActiveStepIndex] = useState(0);
+
+  const [remainingDistance, setRemainingDistance] = useState(0);
+
+  const [offRoute, setOffRoute] = useState(false);
+
+  // The place sheet opens in its compact State 1 layout.
+  const [sheetExpanded, setSheetExpanded] = useState(false);
+
+  const sheetPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_event, gestureState) =>
+          Math.abs(gestureState.dy) > 8 &&
+          Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
+        onPanResponderRelease: (_event, gestureState) => {
+          if (gestureState.dy < -25) {
+            setSheetExpanded(true);
+          } else if (gestureState.dy > 25) {
+            // Collapse only. A downward swipe must never dismiss the sheet.
+            setSheetExpanded(false);
+          }
+        },
+      }),
+    []
+  );
+
+  const locationSubscription =
+    useRef<Location.LocationSubscription | null>(null);
+
+  const activeStepRef = useRef(0);
+
+  const offRouteCountRef = useRef(0);
+  const rerouteInProgressRef = useRef(false);
+  const lastRerouteAtRef = useRef(0);
 
   const mapHtml = useMemo(() => createMapHtml(), []);
+
+  useEffect(() => {
+    setSheetExpanded(false);
+  }, [selected?.id]);
+
+  const rerouteFromCurrentLocation = useCallback(
+    async (currentPosition: Coordinates) => {
+      if (rerouteInProgressRef.current) return;
+
+      const now = Date.now();
+
+      if (now - lastRerouteAtRef.current < 15000) {
+        return;
+      }
+
+      if (!selected) return;
+
+      rerouteInProgressRef.current = true;
+      lastRerouteAtRef.current = now;
+      setIsRerouting(true);
+
+      try {
+        Speech.stop();
+
+        Speech.speak(
+          'You are off route. Recalculating your walking route.',
+          { language: 'en-US', rate: 0.95 }
+        );
+
+        const destination: Coordinates = {
+          latitude: selected.latitude,
+          longitude: selected.longitude,
+        };
+
+        const newRoute = await getWalkingRoute(
+          currentPosition,
+          destination
+        );
+
+        setWalkingRoute(newRoute);
+
+        activeStepRef.current = 0;
+        setActiveStepIndex(0);
+        setRemainingDistance(newRoute.distance);
+
+        offRouteCountRef.current = 0;
+        setOffRoute(false);
+
+        const firstInstruction =
+          newRoute.steps[0]?.instruction ??
+          'Follow the new blue route.';
+
+        Speech.stop().then(() => {
+          Speech.speak(
+            `A new route is ready. ${firstInstruction}`,
+            {
+              language: 'en-US',
+              rate: 0.95,
+              pitch: 1.0,
+            }
+          );
+        });
+      } catch (error) {
+        console.error('Automatic rerouting failed:', error);
+
+        Speech.stop().then(() => {
+          Speech.speak(
+            'I could not calculate a new route. Please try again.',
+            { language: 'en-US' }
+          );
+        });
+      } finally {
+        rerouteInProgressRef.current = false;
+        setIsRerouting(false);
+      }
+    },
+    [selected]
+  );
+
+  useEffect(() => {
+    if (!isNavigating || !walkingRoute || !selected) {
+      return;
+    }
+
+    const route = walkingRoute;
+    const destinationPlace = selected;
+
+    let cancelled = false;
+
+    async function startGpsTracking() {
+      const permission =
+        await Location.requestForegroundPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert(
+          'Location permission required',
+          'GPS permission is needed for walking navigation.'
+        );
+
+        setIsNavigating(false);
+        return;
+      }
+
+      const subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 1500,
+          distanceInterval: 3,
+        },
+        position => {
+          const currentPosition: Coordinates = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          };
+
+          // Update the user's location marker.
+          mapRef.current?.injectJavaScript(
+            `window.updateUserLocation(
+              ${currentPosition.latitude},
+              ${currentPosition.longitude},
+              true
+            ); true;`
+          );
+
+          // Ignore inaccurate GPS readings for navigation decisions.
+          const gpsAccuracy = position.coords.accuracy ?? 999;
+
+          if (gpsAccuracy > 40) {
+            return;
+          }
+
+          // Find the closest point on the current route.
+          const nearest = findNearestRoutePoint(
+            currentPosition,
+            route
+          );
+
+          // Update remaining distance.
+          const remaining = calculateRemainingDistance(
+            route,
+            nearest.index
+          );
+
+          setRemainingDistance(remaining);
+
+          // Check if the user has reached the destination.
+          const destination: Coordinates = {
+            latitude: destinationPlace.latitude,
+            longitude: destinationPlace.longitude,
+          };
+
+          const destinationDistance = calculateDistanceMeters(
+            currentPosition,
+            destination
+          );
+
+          if (destinationDistance <= 15) {
+            locationSubscription.current?.remove();
+            locationSubscription.current = null;
+
+            setIsNavigating(false);
+            setOffRoute(false);
+
+            Speech.stop().then(() => {
+              Speech.speak(
+                `You have arrived at ${destinationPlace.name}.`,
+                { language: 'en-US' }
+              );
+            });
+
+            return;
+          }
+
+          // Use GPS accuracy to adjust the off-route threshold.
+          const offRouteThreshold = Math.max(
+            35,
+            gpsAccuracy * 1.5
+          );
+
+          // Count consecutive off-route readings.
+          if (nearest.distance > offRouteThreshold) {
+            offRouteCountRef.current += 1;
+          } else {
+            offRouteCountRef.current = 0;
+            setOffRoute(false);
+          }
+
+          // Three consecutive readings trigger automatic rerouting.
+          if (offRouteCountRef.current >= 3) {
+            setOffRoute(true);
+            void rerouteFromCurrentLocation(currentPosition);
+            return;
+          }
+
+          let nextStepIndex = activeStepRef.current;
+
+          while (nextStepIndex < route.steps.length - 1) {
+            const currentStep = route.steps[nextStepIndex];
+            const stepEndIndex = currentStep.wayPoints[1];
+
+            if (
+              stepEndIndex > 0 &&
+              nearest.index >= stepEndIndex - 2
+            ) {
+              nextStepIndex++;
+            } else {
+              break;
+            }
+          }
+
+          if (nextStepIndex !== activeStepRef.current) {
+            activeStepRef.current = nextStepIndex;
+            setActiveStepIndex(nextStepIndex);
+
+            const nextInstruction =
+              route.steps[nextStepIndex]?.instruction;
+
+            if (nextInstruction) {
+              Speech.stop().then(() => {
+                Speech.speak(nextInstruction, {
+                  language: 'en-US',
+                  rate: 0.95,
+                  pitch: 1.0,
+                });
+              });
+            }
+          }
+        }
+      );
+
+      if (cancelled) {
+        subscription.remove();
+        return;
+      }
+
+      locationSubscription.current = subscription;
+    }
+
+    startGpsTracking().catch(error => {
+      console.error('GPS tracking error:', error);
+
+      Alert.alert(
+        'Navigation error',
+        'Could not start GPS tracking.'
+      );
+
+      setIsNavigating(false);
+    });
+
+    return () => {
+      cancelled = true;
+
+      locationSubscription.current?.remove();
+      locationSubscription.current = null;
+    };
+  }, [
+    isNavigating,
+    walkingRoute,
+    selected,
+    rerouteFromCurrentLocation,
+  ]);
 
   useFocusEffect(
     useCallback(() => {
@@ -455,6 +862,55 @@ export default function CampusMapScreen() {
     }
   }
 
+  function startNavigation() {
+    if (!walkingRoute || !selected) {
+      Alert.alert(
+        'No walking route',
+        'Calculate a walking route first.'
+      );
+      return;
+    }
+
+    activeStepRef.current = 0;
+    offRouteCountRef.current = 0;
+    rerouteInProgressRef.current = false;
+    lastRerouteAtRef.current = 0;
+
+    setActiveStepIndex(0);
+    setRemainingDistance(walkingRoute.distance);
+    setOffRoute(false);
+
+    setIsNavigating(true);
+
+    const firstInstruction =
+      walkingRoute.steps[0]?.instruction;
+
+    Speech.stop().then(() => {
+      Speech.speak(
+        `Starting walking navigation to ${selected.name}. ${
+          firstInstruction || 'Follow the blue route.'
+        }`,
+        {
+          language: 'en-US',
+          rate: 0.95,
+          pitch: 1.0,
+        }
+      );
+    });
+  }
+
+function stopNavigation() {
+  locationSubscription.current?.remove();
+  locationSubscription.current = null;
+
+  setIsNavigating(false);
+  setOffRoute(false);
+
+  offRouteCountRef.current = 0;
+
+  Speech.stop();
+}
+
   async function openDirections() {
     if (!selected || routeLoading) return;
 
@@ -563,7 +1019,7 @@ export default function CampusMapScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.container}>
-        <WebView
+        <WebView<unknown>
           ref={mapRef}
           source={{ html: mapHtml }}
           style={styles.webMap}
@@ -684,37 +1140,6 @@ export default function CampusMapScreen() {
           </Pressable>
         </View>
 
-        {/* CATEGORY FILTERS */}
-        {!showSavedOnly && (
-          <View style={styles.categories}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.categoryList}
-            >
-              {categories.map(item => (
-                <Pressable
-                  key={item}
-                  onPress={() => setCategory(item)}
-                  style={[
-                    styles.chip,
-                    category === item && styles.activeChip,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      category === item && styles.activeChipText,
-                    ]}
-                  >
-                    {item}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
         {/* SAVED LOCATIONS */}
         {showSavedOnly && (
           <View style={styles.savedBanner}>
@@ -730,134 +1155,265 @@ export default function CampusMapScreen() {
           </View>
         )}
 
-        {/* SELECTED LOCATION */}
+        {/* SELECTED LOCATION — compact by default, expandable by dragging the handle */}
         {selected && (
-          <View style={styles.placeCard}>
-            <View style={styles.handle} />
+          <View
+            style={[
+              styles.placeCard,
+              sheetExpanded && styles.placeCardExpanded,
+            ]}
+          >
+            <View
+              style={styles.sheetHandleArea}
+              {...sheetPanResponder.panHandlers}
+            >
+              <View style={styles.handle} />
+            </View>
 
             <View style={styles.placeHeader}>
               <View style={styles.placeIcon}>
-                <Ionicons
-                  name="location"
-                  size={24}
-                  color={BLUE}
-                />
+                <Ionicons name="location" size={22} color={BLUE} />
               </View>
 
-              <View style={{ flex: 1 }}>
-                <Text style={styles.placeName}>
+              <View style={styles.placeTitleContainer}>
+                <Text style={styles.placeName} numberOfLines={1}>
                   {selected.name}
                 </Text>
-
-                <Text style={styles.placeCategory}>
+                <Text style={styles.placeCategory} numberOfLines={1}>
                   {selected.category} · USTP CDO
                 </Text>
               </View>
 
-              <Pressable onPress={() => setSelected(null)}>
-                <Ionicons
-                  name="close"
-                  size={23}
-                  color="#718096"
-                />
-              </Pressable>
+              {!isNavigating && (
+                <Pressable
+                  style={styles.closePlaceButton}
+                  onPress={() => {
+                    setSelected(null);
+                    setSheetExpanded(false);
+                  }}
+                  hitSlop={10}
+                >
+                  <Ionicons name="close" size={21} color="#718096" />
+                </Pressable>
+              )}
             </View>
 
-            <Text style={styles.description}>
-              {selected.description}
-            </Text>
-            {walkingRoute && (
-  <View style={styles.routeSummary}>
-    <View style={styles.routeInfo}>
-      <Ionicons
-        name="walk"
-        size={21}
-        color={BLUE}
-      />
+            {walkingRoute ? (
+              <View style={styles.compactRouteRow}>
+                <View style={styles.compactMetric}>
+                  <Ionicons name="walk-outline" size={18} color={BLUE} />
+                  <Text style={styles.compactMetricText}>
+                    {isNavigating
+                      ? formatDistance(remainingDistance)
+                      : formatDistance(walkingRoute.distance)}
+                  </Text>
+                </View>
+                <View style={styles.metricDivider} />
+                <View style={styles.compactMetric}>
+                  <Ionicons name="time-outline" size={18} color={BLUE} />
+                  <Text style={styles.compactMetricText}>
+                    {Math.ceil(walkingRoute.duration / 60)} min
+                  </Text>
+                </View>
+                {isNavigating && (
+                  <View style={styles.activePill}>
+                    <View style={styles.activeDot} />
+                    <Text style={styles.activePillText}>LIVE</Text>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <Text style={styles.compactDescription} numberOfLines={1}>
+                {selected.description}
+              </Text>
+            )}
 
-      <View>
-        <Text style={styles.routeValue}>
-          {(walkingRoute.distance / 1000).toFixed(2)} km
-        </Text>
-
-        <Text style={styles.routeLabel}>
-          Walking distance
-        </Text>
-      </View>
-    </View>
-
-    <View style={styles.routeInfo}>
-      <Ionicons
-        name="time-outline"
-        size={21}
-        color={BLUE}
-      />
-
-      <View>
-        <Text style={styles.routeValue}>
-          {Math.ceil(walkingRoute.duration / 60)} min
-        </Text>
-
-        <Text style={styles.routeLabel}>
-          Estimated walking time
-        </Text>
-      </View>
-    </View>
-
-    <Pressable
-      onPress={() => setWalkingRoute(null)}
-    >
-      <Ionicons
-        name="close-circle"
-        size={23}
-        color="#8793A1"
-      />
-    </Pressable>
-  </View>
-)}
-
-            <View style={styles.actions}>
-              <Pressable
-                style={styles.directionsButton}
-                onPress={openDirections}
-                disabled={routeLoading}
-              >
-                <Ionicons
-                  name="navigate"
-                  size={19}
-                  color="#FFFFFF"
-                />
-
-                <Text style={styles.directionsText}>
-                  {routeLoading
-                    ? 'Finding Route...'
-                    : walkingRoute
-                      ? 'Refresh Route'
-                      : 'Walking Route'}
+            {isNavigating && walkingRoute && (
+              <View style={styles.compactInstruction}>
+                <Ionicons name="walk" size={18} color={BLUE} />
+                <Text style={styles.compactInstructionText} numberOfLines={2}>
+                  {walkingRoute.steps[activeStepIndex]?.instruction ??
+                    'Continue following the blue route.'}
                 </Text>
-              </Pressable>
+              </View>
+            )}
 
-              <Pressable
-                style={styles.saveButton}
-                onPress={() => toggleSaved(selected.id)}
-              >
-                <Ionicons
-                  name={
-                    savedIds.includes(String(selected.id))
-                      ? 'bookmark'
-                      : 'bookmark-outline'
-                  }
-                  size={19}
-                  color={BLUE}
-                />
+            <View style={styles.compactActions}>
+              {isNavigating ? (
+                <Pressable
+                  style={styles.stopNavigationButtonCompact}
+                  onPress={stopNavigation}
+                >
+                  <Ionicons name="stop-circle" size={18} color="#FFFFFF" />
+                  <Text style={styles.stopNavigationText}>End Navigation</Text>
+                </Pressable>
+              ) : (
+                <>
+                  <Pressable
+                    style={styles.directionsButton}
+                    onPress={openDirections}
+                    disabled={routeLoading}
+                  >
+                    <Ionicons
+                      name={routeLoading ? 'hourglass-outline' : 'navigate'}
+                      size={18}
+                      color="#FFFFFF"
+                    />
+                    <Text style={styles.directionsText}>
+                      {routeLoading
+                        ? 'Finding Route...'
+                        : walkingRoute
+                          ? 'Refresh Route'
+                          : 'Walking Route'}
+                    </Text>
+                  </Pressable>
 
-                <Text style={styles.saveText}>
-                  {savedIds.includes(String(selected.id))
-                    ? 'Saved'
-                    : 'Save'}
-                </Text>
-              </Pressable>
+                  {walkingRoute ? (
+                    <Pressable
+                      style={styles.startNavigationCompact}
+                      onPress={startNavigation}
+                    >
+                      <Ionicons name="play" size={17} color="#FFFFFF" />
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      style={styles.saveButton}
+                      onPress={() => toggleSaved(selected.id)}
+                    >
+                      <Ionicons
+                        name={
+                          savedIds.includes(String(selected.id))
+                            ? 'bookmark'
+                            : 'bookmark-outline'
+                        }
+                        size={18}
+                        color={BLUE}
+                      />
+                      <Text style={styles.saveText}>
+                        {savedIds.includes(String(selected.id)) ? 'Saved' : 'Save'}
+                      </Text>
+                    </Pressable>
+                  )}
+                </>
+              )}
             </View>
+
+            {sheetExpanded && (
+              <ScrollView
+                style={styles.expandedSheetContent}
+                showsVerticalScrollIndicator={false}
+                nestedScrollEnabled
+              >
+                <Text style={styles.description}>
+                  {selected.description}
+                </Text>
+
+                {walkingRoute && (
+                  <View style={styles.expandedRouteSummary}>
+                    <View style={styles.routeInfo}>
+                      <Ionicons name="walk" size={20} color={BLUE} />
+                      <View>
+                        <Text style={styles.routeValue}>
+                          {formatDistance(
+                            isNavigating
+                              ? remainingDistance
+                              : walkingRoute.distance
+                          )}
+                        </Text>
+                        <Text style={styles.routeLabel}>
+                          {isNavigating ? 'Remaining distance' : 'Walking distance'}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.routeInfo}>
+                      <Ionicons name="time-outline" size={20} color={BLUE} />
+                      <View>
+                        <Text style={styles.routeValue}>
+                          {Math.ceil(walkingRoute.duration / 60)} min
+                        </Text>
+                        <Text style={styles.routeLabel}>Estimated time</Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {isNavigating && walkingRoute && (
+                  <View style={styles.navigationPanel}>
+                    <View style={styles.navigationHeader}>
+                      <Ionicons name="walk" size={21} color={BLUE} />
+                      <Text style={styles.navigationTitle}>
+                        WALKING NAVIGATION ACTIVE
+                      </Text>
+                    </View>
+
+                    <Text style={styles.nextInstruction}>
+                      {walkingRoute.steps[activeStepIndex]?.instruction ??
+                        'Continue following the blue route.'}
+                    </Text>
+
+                    <View style={styles.navigationDistance}>
+                      <Text style={styles.remainingLabel}>
+                        Remaining distance
+                      </Text>
+                      <Text style={styles.remainingValue}>
+                        {formatDistance(remainingDistance)}
+                      </Text>
+                    </View>
+
+                    {offRoute && (
+                      <View style={styles.offRouteWarning}>
+                        <Ionicons name="warning" size={18} color="#D97706" />
+                        <Text style={styles.offRouteText}>
+                          {isRerouting
+                            ? 'Recalculating your walking route...'
+                            : 'You are away from the walking route. A new route will be calculated.'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {!isNavigating && (
+                  <View style={styles.expandedSecondaryActions}>
+                    <Pressable
+                      style={styles.expandedSaveButton}
+                      onPress={() => toggleSaved(selected.id)}
+                    >
+                      <Ionicons
+                        name={
+                          savedIds.includes(String(selected.id))
+                            ? 'bookmark'
+                            : 'bookmark-outline'
+                        }
+                        size={18}
+                        color={BLUE}
+                      />
+                      <Text style={styles.saveText}>
+                        {savedIds.includes(String(selected.id))
+                          ? 'Saved'
+                          : 'Save location'}
+                      </Text>
+                    </Pressable>
+
+                    {walkingRoute && (
+                      <Pressable
+                        style={styles.clearRouteButton}
+                        onPress={() => setWalkingRoute(null)}
+                      >
+                        <Ionicons name="close-circle-outline" size={18} color="#64748B" />
+                        <Text style={styles.clearRouteText}>Clear route</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                )}
+
+                {isNavigating && offRoute && (
+                  <Text style={styles.expandedHint}>
+                    Keep the app open while walking so GPS guidance can continue.
+                  </Text>
+                )}
+              </ScrollView>
+            )}
           </View>
         )}
 
@@ -953,24 +1509,14 @@ export default function CampusMapScreen() {
                 label="Explore Buildings"
                 onPress={() => {
                   setShowSavedOnly(false);
-                  setCategory('Academic');
-                  setQuery('');
-                  setSelected(null);
-                  setDrawerOpen(false);
-                }}
-              />
-
-              <DrawerItem
-                icon="grid-outline"
-                label="Categories"
-                onPress={() => {
-                  setShowSavedOnly(false);
                   setCategory('All');
                   setQuery('');
                   setSelected(null);
                   setDrawerOpen(false);
                 }}
               />
+
+
 
               <DrawerItem
                 icon="bookmark-outline"
@@ -1219,21 +1765,187 @@ const styles = StyleSheet.create({
   },
   placeCard: {
     position: 'absolute',
-    bottom: 12,
+    bottom: 10,
     left: 12,
     right: 12,
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
-    padding: 16,
-    elevation: 8,
+    paddingHorizontal: 14,
+    paddingBottom: 13,
+    paddingTop: 5,
+    elevation: 12,
+    shadowColor: '#102A43',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    zIndex: 8,
+    maxHeight: '78%',
+  },
+  placeCardExpanded: {
+    maxHeight: '78%',
+  },
+  sheetHandleArea: {
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   handle: {
-    alignSelf: 'center',
-    width: 36,
+    width: 38,
     height: 4,
+    borderRadius: 4,
+    backgroundColor: '#D2DCE8',
+  },
+  placeTitleContainer: {
+    flex: 1,
+    minWidth: 0,
+  },
+  closePlaceButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F4F7FA',
+  },
+  compactDescription: {
+    color: '#718096',
+    fontSize: 11,
+    marginTop: 8,
+    marginLeft: 55,
+  },
+  compactRouteRow: {
+    minHeight: 42,
+    marginTop: 10,
+    paddingHorizontal: 11,
+    borderRadius: 13,
+    backgroundColor: '#F1F6FF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+  },
+  compactMetric: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  compactMetricText: {
+    color: '#263746',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  metricDivider: {
+    width: 1,
+    height: 22,
+    backgroundColor: '#D9E5F3',
+  },
+  activePill: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#E1F5E9',
+    borderRadius: 20,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
     borderRadius: 3,
-    backgroundColor: '#D9E0E7',
-    marginBottom: 14,
+    backgroundColor: '#16834A',
+  },
+  activePillText: {
+    color: '#16834A',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  compactInstruction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    marginTop: 10,
+    paddingHorizontal: 2,
+  },
+  compactInstructionText: {
+    flex: 1,
+    color: '#24364B',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
+  },
+  compactActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    marginTop: 11,
+  },
+  startNavigationCompact: {
+    width: 48,
+    height: 44,
+    borderRadius: 13,
+    backgroundColor: '#16834A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopNavigationButtonCompact: {
+    flex: 1,
+    height: 43,
+    backgroundColor: '#D93025',
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  expandedSheetContent: {
+    flexGrow: 0,
+    maxHeight: 300,
+    marginTop: 4,
+  },
+  expandedRouteSummary: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#F1F6FF',
+    borderRadius: 13,
+    padding: 12,
+    marginTop: 12,
+  },
+  expandedSecondaryActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+    marginBottom: 3,
+  },
+  expandedSaveButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 11,
+    backgroundColor: '#EAF2FF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  clearRouteButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 11,
+    backgroundColor: '#F3F5F7',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  clearRouteText: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  expandedHint: {
+    color: '#718096',
+    fontSize: 10,
+    marginTop: 10,
   },
   placeHeader: {
     flexDirection: 'row',
@@ -1433,4 +2145,90 @@ routeLabel: {
   color: '#718096',
   marginTop: 2,
 },
+  startNavigationButton: {
+    height: 48,
+    borderRadius: 13,
+    backgroundColor: '#16834A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    marginTop: 13,
+  },
+  startNavigationText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  navigationPanel: {
+    backgroundColor: '#F1F6FF',
+    borderRadius: 15,
+    padding: 13,
+    marginTop: 13,
+  },
+  navigationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  navigationTitle: {
+    color: BLUE,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  nextInstruction: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1D2D40',
+    lineHeight: 22,
+    marginTop: 12,
+  },
+  navigationDistance: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#DCE7F5',
+  },
+  remainingLabel: {
+    color: '#718096',
+    fontSize: 12,
+  },
+  remainingValue: {
+    color: BLUE,
+    fontWeight: '900',
+    fontSize: 16,
+  },
+  offRouteWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFF4DF',
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 12,
+  },
+  offRouteText: {
+    flex: 1,
+    color: '#92400E',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  stopNavigationButton: {
+    height: 44,
+    backgroundColor: '#D93025',
+    borderRadius: 11,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 13,
+  },
+  stopNavigationText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
 });

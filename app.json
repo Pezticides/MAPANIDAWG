@@ -15,7 +15,11 @@
           "androidGoogleMapsApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-image",
+      "expo-splash-screen",
+      "expo-web-browser",
+      "expo-font"
     ],
     "android": {
       "package": "com.shem.ustpcampusnavigator"
