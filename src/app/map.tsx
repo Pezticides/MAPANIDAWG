@@ -379,6 +379,7 @@ export default function CampusMapScreen() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
   const [isRerouting, setIsRerouting] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
 
   const [activeStepIndex, setActiveStepIndex] = useState(0);
 
@@ -388,6 +389,13 @@ export default function CampusMapScreen() {
 
   // The place sheet opens in its compact State 1 layout.
   const [sheetExpanded, setSheetExpanded] = useState(false);
+  const categories = useMemo(
+    () => [
+      'All',
+      ...Array.from(new Set(campusLocations.map(place => place.category))).sort(),
+    ],
+    []
+  );
 
   const sheetPanResponder = useMemo(
     () =>
@@ -901,6 +909,7 @@ function stopNavigation() {
   locationSubscription.current = null;
 
   setIsNavigating(false);
+  setFocusMode(false);
   setOffRoute(false);
 
   offRouteCountRef.current = 0;
@@ -1030,56 +1039,123 @@ function stopNavigation() {
         />
 
         {/* TOP BAR */}
-        <View style={styles.topBar}>
-          <Pressable
-            style={styles.iconButton}
-            onPress={() => setDrawerOpen(true)}
-          >
-            <Ionicons name="menu" size={25} color="#263746" />
-          </Pressable>
+        {!focusMode && (
+          <View style={styles.topBar}>
+            <Pressable
+              style={[
+                styles.iconButton,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+              onPress={() => setDrawerOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Open menu"
+            >
+              <Ionicons name="menu" size={24} color={colors.text} />
+            </Pressable>
 
-          <View style={styles.searchBox}>
-            <Ionicons name="search" size={20} color="#68778D" />
+            <View
+              style={[
+                styles.searchBox,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <Ionicons name="search" size={19} color={colors.secondaryText} />
 
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search campus locations"
-              placeholderTextColor="#8793A1"
-              value={query}
-              onChangeText={setQuery}
-              returnKeyType="search"
-            />
+              <TextInput
+                style={[styles.searchInput, { color: colors.text }]}
+                placeholder="Search buildings or places"
+                placeholderTextColor={colors.secondaryText}
+                value={query}
+                onChangeText={setQuery}
+                returnKeyType="search"
+                accessibilityLabel="Search campus locations"
+              />
 
-            {query.length > 0 && (
-              <Pressable onPress={() => setQuery('')}>
-                <Ionicons
-                  name="close-circle"
-                  size={20}
-                  color="#8793A1"
-                />
-              </Pressable>
-            )}
+              {query.length > 0 && (
+                <Pressable
+                  onPress={() => setQuery('')}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear search"
+                >
+                  <Ionicons
+                    name="close-circle"
+                    size={20}
+                    color={colors.secondaryText}
+                  />
+                </Pressable>
+              )}
+            </View>
           </View>
-        </View>
+        )}
+
+        {!focusMode && query.length === 0 && (
+          <View style={styles.categories}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.categoryList}
+            >
+              {categories.map(item => {
+                const isActive = category === item;
+
+                return (
+                  <Pressable
+                    key={item}
+                    style={[
+                      styles.chip,
+                      isActive
+                        ? styles.activeChip
+                        : {
+                            backgroundColor: colors.card,
+                            borderColor: colors.border,
+                          },
+                    ]}
+                    onPress={() => setCategory(item)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isActive }}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        { color: isActive ? '#FFFFFF' : colors.mutedText },
+                      ]}
+                    >
+                      {item}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
 
         {/* SEARCH RESULTS */}
-        {query.length > 0 && (
-          <View style={styles.results}>
+        {!focusMode && query.length > 0 && (
+          <View
+            style={[
+              styles.results,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
             <ScrollView keyboardShouldPersistTaps="handled">
               {filtered.map(place => (
                 <Pressable
                   key={String(place.id)}
-                  style={styles.resultRow}
+                  style={[
+                    styles.resultRow,
+                    { borderBottomColor: colors.border },
+                  ]}
                   onPress={() => focusLocation(place)}
                 >
                   <Ionicons name="location" size={21} color={BLUE} />
 
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.resultName}>
+                    <Text style={[styles.resultName, { color: colors.text }]}>
                       {place.name}
                     </Text>
 
-                    <Text style={styles.resultCategory}>
+                    <Text style={[styles.resultCategory, { color: colors.secondaryText }]}>
                       {place.category}
                     </Text>
                   </View>
@@ -1095,8 +1171,8 @@ function stopNavigation() {
               ))}
 
               {filtered.length === 0 && (
-                <Text style={styles.empty}>
-                  No locations found.
+                <Text style={[styles.empty, { color: colors.secondaryText }]}>
+                  No places match “{query}”.
                 </Text>
               )}
             </ScrollView>
@@ -1104,35 +1180,48 @@ function stopNavigation() {
         )}
 
         {/* MAP CONTROLS */}
-        <View style={styles.mapControls}>
-          <Pressable
-            style={styles.iconButton}
-            onPress={locateMe}
-          >
-            <Ionicons name="locate" size={23} color={BLUE} />
-          </Pressable>
+        {!focusMode && query.length === 0 && (
+          <View style={styles.mapControls}>
+            <Pressable
+              style={[
+                styles.mapControlButton,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+              onPress={locateMe}
+              accessibilityRole="button"
+              accessibilityLabel="Show my location"
+            >
+              <Ionicons name="locate" size={23} color={BLUE} />
+            </Pressable>
 
-          <Pressable
-            style={styles.iconButton}
-            onPress={() =>
-              setBaseLayer(current =>
-                current === 'osm' ? 'carto' : 'osm'
-              )
-            }
-          >
-            <Ionicons
-              name="layers-outline"
-              size={23}
-              color="#263746"
-            />
-          </Pressable>
-        </View>
+            <Pressable
+              style={[
+                styles.mapControlButton,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+              onPress={() =>
+                setBaseLayer(current =>
+                  current === 'osm' ? 'carto' : 'osm'
+                )
+              }
+              accessibilityRole="button"
+              accessibilityLabel="Change map style"
+            >
+              <Ionicons
+                name="layers-outline"
+                size={23}
+                color={colors.text}
+              />
+            </Pressable>
+          </View>
+        )}
 
         {/* SELECTED LOCATION — compact by default, expandable by dragging the handle */}
-        {selected && (
+        {selected && !focusMode && (
           <View
             style={[
               styles.placeCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
               sheetExpanded && styles.placeCardExpanded,
             ]}
           >
@@ -1160,15 +1249,15 @@ function stopNavigation() {
                 <View style={styles.placeTitleContainer}>
                   <Text
                     style={[styles.locationTitle, { color: colors.text }]}
-                    numberOfLines={1}
+                    numberOfLines={2}
                   >
-                    {selected.name.toUpperCase()}
+                    {selected.name}
                   </Text>
                   <Text
                     style={[styles.locationCategory, { color: BLUE }]}
                     numberOfLines={1}
                   >
-                    {selected.category} - USTP CDO
+                    {selected.category} · USTP CDO
                   </Text>
                 </View>
 
@@ -1229,59 +1318,86 @@ function stopNavigation() {
 
             <View style={styles.compactActions}>
               {isNavigating ? (
-                <Pressable
-                  style={styles.stopNavigationButtonCompact}
-                  onPress={stopNavigation}
-                >
-                  <Ionicons name="stop-circle" size={18} color="#FFFFFF" />
-                  <Text style={styles.stopNavigationText}>End Navigation</Text>
-                </Pressable>
-              ) : (
                 <>
                   <Pressable
-                    style={styles.directionsButton}
-                    onPress={openDirections}
-                    disabled={routeLoading}
+                    style={styles.focusModeButton}
+                    onPress={() => setFocusMode(true)}
                   >
-                    <Ionicons
-                      name={routeLoading ? 'hourglass-outline' : 'navigate'}
-                      size={18}
-                      color="#FFFFFF"
-                    />
-                    <Text style={styles.directionsText}>
-                      {routeLoading
-                        ? 'Finding Route...'
-                        : walkingRoute
-                          ? 'Refresh Route'
-                          : 'Walking Route'}
-                    </Text>
+                    <Ionicons name="scan" size={18} color="#FFFFFF" />
+                    <Text style={styles.focusModeButtonText}>Focus Mode</Text>
                   </Pressable>
 
+                  <Pressable
+                    style={styles.stopNavigationButtonCompact}
+                    onPress={stopNavigation}
+                  >
+                    <Ionicons name="stop-circle" size={18} color="#FFFFFF" />
+                    <Text style={styles.stopNavigationText}>End Navigation</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
                   {walkingRoute ? (
-                    <Pressable
-                      style={styles.startNavigationCompact}
-                      onPress={startNavigation}
-                    >
-                      <Ionicons name="play" size={17} color="#FFFFFF" />
-                    </Pressable>
+                    <>
+                      <Pressable
+                        style={styles.startNavigationAction}
+                        onPress={startNavigation}
+                        accessibilityRole="button"
+                        accessibilityLabel="Start walking navigation"
+                      >
+                        <Ionicons name="play" size={18} color="#FFFFFF" />
+                        <Text style={styles.startNavigationActionText}>
+                          Start Navigation
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={styles.refreshRouteAction}
+                        onPress={openDirections}
+                        disabled={routeLoading}
+                        accessibilityRole="button"
+                        accessibilityLabel="Refresh walking route"
+                      >
+                        <Ionicons
+                          name={routeLoading ? 'hourglass-outline' : 'refresh'}
+                          size={19}
+                          color={BLUE}
+                        />
+                      </Pressable>
+                    </>
                   ) : (
-                    <Pressable
-                      style={styles.saveButton}
-                      onPress={() => toggleSaved(selected.id)}
-                    >
-                      <Ionicons
-                        name={
-                          savedIds.includes(String(selected.id))
-                            ? 'bookmark'
-                            : 'bookmark-outline'
-                        }
-                        size={18}
-                        color={BLUE}
-                      />
-                      <Text style={styles.saveText}>
-                        {savedIds.includes(String(selected.id)) ? 'Saved' : 'Save'}
-                      </Text>
-                    </Pressable>
+                    <>
+                      <Pressable
+                        style={styles.directionsButton}
+                        onPress={openDirections}
+                        disabled={routeLoading}
+                      >
+                        <Ionicons
+                          name={routeLoading ? 'hourglass-outline' : 'navigate'}
+                          size={18}
+                          color="#FFFFFF"
+                        />
+                        <Text style={styles.directionsText}>
+                          {routeLoading ? 'Finding Route...' : 'Walking Route'}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={styles.saveButton}
+                        onPress={() => toggleSaved(selected.id)}
+                      >
+                        <Ionicons
+                          name={
+                            savedIds.includes(String(selected.id))
+                              ? 'bookmark'
+                              : 'bookmark-outline'
+                          }
+                          size={18}
+                          color={BLUE}
+                        />
+                        <Text style={styles.saveText}>
+                          {savedIds.includes(String(selected.id)) ? 'Saved' : 'Save'}
+                        </Text>
+                      </Pressable>
+                    </>
                   )}
                 </>
               )}
@@ -1402,8 +1518,147 @@ function stopNavigation() {
           </View>
         )}
 
+        {/* NAVIGATION FOCUS MODE */}
+        {focusMode && isNavigating && walkingRoute && selected && (
+          <View
+            style={styles.focusModeContainer}
+            pointerEvents="box-none"
+          >
+            <View style={styles.focusTopRow}>
+              <View
+                style={[
+                  styles.focusLiveBadge,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+              >
+                <View style={styles.focusLiveDot} />
+                <View>
+                  <Text style={styles.focusLiveText}>NAVIGATION ACTIVE</Text>
+                  <Text style={[styles.focusLiveCaption, { color: colors.secondaryText }]}>
+                    GPS guidance is on
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                style={[
+                  styles.exitFocusButton,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+                onPress={() => setFocusMode(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Exit focus mode"
+              >
+                <Ionicons name="scan-outline" size={19} color={colors.text} />
+                <Text style={[styles.exitFocusText, { color: colors.text }]}>
+                  Exit Focus
+                </Text>
+              </Pressable>
+            </View>
+
+            <View
+              style={[
+                styles.focusInstructionCard,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <View style={styles.focusInstructionHeader}>
+                <Text style={[styles.focusEyebrow, { color: colors.secondaryText }]}>
+                  NEXT DIRECTION
+                </Text>
+                <Text style={[styles.focusStepCount, { color: colors.secondaryText }]}>
+                  {walkingRoute.steps.length > 0
+                    ? `STEP ${Math.min(activeStepIndex + 1, walkingRoute.steps.length)} OF ${walkingRoute.steps.length}`
+                    : 'ROUTE GUIDANCE'}
+                </Text>
+              </View>
+
+              <View style={styles.focusInstructionRow}>
+                <View style={styles.focusDirectionIcon}>
+                  <Ionicons name="walk" size={21} color={BLUE} />
+                </View>
+
+                <Text style={[styles.focusInstruction, { color: colors.text }]}>
+                  {walkingRoute.steps[activeStepIndex]?.instruction ??
+                    'Continue following the blue route.'}
+                </Text>
+              </View>
+
+              {offRoute && (
+                <View style={styles.focusWarning}>
+                  <Ionicons name="warning" size={19} color="#D97706" />
+                  <Text style={styles.focusWarningText}>
+                    {isRerouting
+                      ? 'Recalculating your route...'
+                      : 'You are off route. Recalculating shortly.'}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <View
+              style={[
+                styles.focusBottomCard,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <View style={styles.focusDestinationHeader}>
+                <View style={styles.focusDestinationIcon}>
+                  <Ionicons name="location" size={19} color={BLUE} />
+                </View>
+                <View style={styles.focusDestinationCopy}>
+                  <Text style={[styles.focusDestinationLabel, { color: colors.secondaryText }]}>
+                    DESTINATION
+                  </Text>
+                  <Text
+                    style={[styles.focusDestination, { color: colors.text }]}
+                    numberOfLines={2}
+                  >
+                    {selected.name}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.focusMetrics}>
+                <View style={styles.focusMetric}>
+                  <Text style={[styles.focusMetricValue, { color: BLUE }]}>
+                    {formatDistance(remainingDistance)}
+                  </Text>
+                  <Text style={[styles.focusMetricLabel, { color: colors.secondaryText }]}>
+                    DISTANCE LEFT
+                  </Text>
+                </View>
+
+                <View style={[styles.focusMetricDivider, { backgroundColor: colors.border }]} />
+
+                <View style={styles.focusMetric}>
+                  <Text style={[styles.focusMetricValue, { color: BLUE }]}>
+                    {Math.ceil(walkingRoute.duration / 60)} min
+                  </Text>
+                  <Text style={[styles.focusMetricLabel, { color: colors.secondaryText }]}>
+                    ESTIMATED TIME
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                style={styles.focusEndButton}
+                onPress={() => {
+                  stopNavigation();
+                  setFocusMode(false);
+                }}
+              >
+                <Ionicons name="stop-circle" size={20} color="#FFFFFF" />
+                <Text style={styles.focusEndButtonText}>
+                  End Navigation
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
         {/* SIDE DRAWER */}
-        {drawerOpen && (
+        {drawerOpen && !focusMode && (
           <View style={styles.drawerOverlay}>
             <Pressable
               style={styles.scrim}
@@ -1543,11 +1798,7 @@ function stopNavigation() {
                 label="About USTP"
                 onPress={() => {
                   setDrawerOpen(false);
-
-                  Alert.alert(
-                    'About USTP',
-                    'USTP CDO Campus Navigator helps students and visitors explore campus locations, find buildings, and get directions.'
-                  );
+                  router.push('/about');
                 }}
               />
 
@@ -1653,32 +1904,35 @@ const styles = StyleSheet.create({
   },
   topBar: {
     position: 'absolute',
-    top: 10,
-    left: 12,
-    right: 12,
+    top: 12,
+    left: 14,
+    right: 14,
     flexDirection: 'row',
-    gap: 9,
+    gap: 10,
     alignItems: 'center',
+    zIndex: 6,
   },
   iconButton: {
     width: 48,
     height: 48,
-    borderRadius: 15,
+    borderRadius: 16,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
+    borderWidth: 1,
   },
   searchBox: {
     flex: 1,
-    height: 48,
-    borderRadius: 15,
+    height: 52,
+    borderRadius: 17,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     elevation: 4,
+    borderWidth: 1,
   },
   searchInput: {
     flex: 1,
@@ -1687,20 +1941,23 @@ const styles = StyleSheet.create({
   },
   results: {
     position: 'absolute',
-    top: 65,
-    left: 69,
-    right: 12,
-    maxHeight: 260,
+    top: 72,
+    left: 14,
+    right: 14,
+    maxHeight: 320,
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 18,
+    borderWidth: 1,
     elevation: 8,
-    zIndex: 10,
+    zIndex: 11,
+    overflow: 'hidden',
   },
   resultRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 13,
+    paddingHorizontal: 15,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#F0F2F5',
   },
@@ -1720,33 +1977,51 @@ const styles = StyleSheet.create({
   },
   mapControls: {
     position: 'absolute',
-    right: 14,
-    top: 82,
+    right: 16,
+    top: 137,
     gap: 10,
+    zIndex: 5,
+  },
+  mapControlButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 5,
+    shadowColor: '#102A43',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
   },
   categories: {
     position: 'absolute',
-    top: 145,
+    top: 78,
     left: 0,
     right: 0,
+    zIndex: 5,
   },
   categoryList: {
-    gap: 8,
-    paddingHorizontal: 12,
+    gap: 9,
+    paddingHorizontal: 14,
+    paddingVertical: 3,
   },
   chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 22,
+    paddingHorizontal: 15,
+    paddingVertical: 9,
+    borderRadius: 18,
     backgroundColor: '#FFFFFF',
-    elevation: 3,
+    borderWidth: 1,
+    elevation: 4,
   },
   activeChip: {
     backgroundColor: BLUE,
+    borderColor: BLUE,
   },
   chipText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#435267',
   },
   activeChipText: {
@@ -1779,20 +2054,21 @@ const styles = StyleSheet.create({
   },
   placeCard: {
     position: 'absolute',
-    bottom: 10,
-    left: 12,
-    right: 12,
+    bottom: 12,
+    left: 14,
+    right: 14,
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    paddingHorizontal: 14,
-    paddingBottom: 13,
-    paddingTop: 5,
+    borderRadius: 25,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    paddingTop: 7,
     elevation: 12,
     shadowColor: '#102A43',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    zIndex: 8,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    zIndex: 9,
     maxHeight: '78%',
   },
   placeCardExpanded: {
@@ -1805,16 +2081,17 @@ const styles = StyleSheet.create({
   locationPhoto: {
     width: '100%',
     height: 190,
-    borderRadius: 14,
+    borderRadius: 17,
     backgroundColor: '#E5E7EB',
   },
   locationTitle: {
-    fontSize: 19,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '900',
   },
   locationCategory: {
     fontSize: 13,
     fontWeight: '600',
+    marginTop: 2,
   },
   locationDescription: {
     fontSize: 13,
@@ -1915,14 +2192,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 9,
     marginTop: 11,
-  },
-  startNavigationCompact: {
-    width: 48,
-    height: 44,
-    borderRadius: 13,
-    backgroundColor: '#16834A',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   stopNavigationButtonCompact: {
     flex: 1,
@@ -2045,6 +2314,30 @@ const styles = StyleSheet.create({
   directionsText: {
     color: '#FFFFFF',
     fontWeight: '800',
+  },
+  startNavigationAction: {
+    flex: 1,
+    minHeight: 47,
+    borderRadius: 14,
+    backgroundColor: '#16834A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    paddingHorizontal: 12,
+  },
+  startNavigationActionText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  refreshRouteAction: {
+    width: 48,
+    height: 47,
+    borderRadius: 14,
+    backgroundColor: '#EAF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   saveButton: {
     paddingHorizontal: 18,
@@ -2281,5 +2574,235 @@ routeLabel: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
+  },
+  focusModeButton: {
+    flex: 1,
+    height: 43,
+    backgroundColor: '#16834A',
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 7,
+  },
+  focusModeButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  focusModeContainer: {
+    ...StyleSheet.absoluteFill,
+    justifyContent: 'flex-start',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 20,
+    zIndex: 15,
+  },
+  focusTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+  },
+  focusLiveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    elevation: 5,
+    shadowColor: '#102A43',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.14,
+    shadowRadius: 7,
+  },
+  focusLiveDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#16834A',
+  },
+  focusLiveText: {
+    color: '#16834A',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  focusLiveCaption: {
+    color: '#718096',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  exitFocusButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 15,
+    borderWidth: 1,
+    elevation: 5,
+  },
+  exitFocusText: {
+    color: '#263746',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  focusInstructionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 13,
+    elevation: 6,
+    shadowColor: '#102A43',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+  },
+  focusInstructionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  focusEyebrow: {
+    color: '#718096',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  focusStepCount: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  focusInstructionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  focusDirectionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: '#EAF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  focusInstruction: {
+    flex: 1,
+    color: '#172B4D',
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '800',
+  },
+  focusWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFF4DF',
+    borderRadius: 11,
+    padding: 8,
+    marginTop: 9,
+  },
+  focusWarningText: {
+    flex: 1,
+    color: '#92400E',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  focusBottomCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    borderWidth: 1,
+    padding: 19,
+    elevation: 8,
+    shadowColor: '#102A43',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    marginTop: 'auto',
+  },
+  focusDestinationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  focusDestinationIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    backgroundColor: '#EAF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  focusDestinationCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  focusDestinationLabel: {
+    color: '#718096',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  focusDestination: {
+    color: '#172B4D',
+    fontSize: 17,
+    fontWeight: '900',
+    marginTop: 3,
+  },
+  focusMetrics: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    marginTop: 17,
+    marginBottom: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  focusMetric: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  focusMetricValue: {
+    color: BLUE,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  focusMetricLabel: {
+    color: '#718096',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginTop: 5,
+    textAlign: 'center',
+  },
+  focusMetricDivider: {
+    alignSelf: 'stretch',
+    width: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  focusEndButton: {
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: '#D93025',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 9,
+  },
+  focusEndButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900',
   },
 });
