@@ -1,4 +1,6 @@
 
+import { ImageSourcePropType } from 'react-native';
+
 export type CampusLocation = {
   id: string;
   name: string;
@@ -6,6 +8,7 @@ export type CampusLocation = {
   description: string;
   latitude: number;
   longitude: number;
+  image?: ImageSourcePropType;
 };
 
 export const CAMPUS_CENTER = {
@@ -65,22 +68,25 @@ export const campusLocations: CampusLocation[] = [
     description: 'College of Information Technology and Computing (CITC), USTP CDO.',
     latitude: 8.485942,
     longitude: 124.657316,
+    image: require('../assets/images/CICTBUILDING9.jpg'),
   },
   {
-      id: 'lrc-building',
-      name: 'LRC Building 24',
-      category: 'Academic',
-      description: 'Learning Resource Center (LRC), USTP CDO.',
-      latitude: 8.486630,
-      longitude: 124.655804,
+    id: 'lrc-building',
+    name: 'LRC Building 24',
+    category: 'Academic',
+    description: 'Learning Resource Center (LRC), USTP CDO.',
+    latitude: 8.486630,
+    longitude: 124.655804,
+    image: require('../assets/images/LRCBUILDING24.jpg'),
   },
   {
-        id: 'medical-building',
-        name: 'Medical Building',
-        category: 'Facility',
-        description: 'Clinic, USTP CDO.',
-        latitude: 8.486077,
-        longitude: 124.655630,
+    id: 'medical-building',
+    name: 'Medical Building',
+    category: 'Facility',
+    description: 'Clinic, USTP CDO.',
+    latitude: 8.486077,
+    longitude: 124.655630,
+    image: require('../assets/images/MEDICALBUILDING.jpg'),
   },
   {
           id: 'memorial-hall',

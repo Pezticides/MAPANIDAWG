@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View,
   Text,
+  Image,
   TextInput,
   Pressable,
   ScrollView,
@@ -12,8 +13,7 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -30,14 +30,16 @@ import {
 
 import {
   getCurrentProfile,
-  getSavedLocationsKey,
   LocalProfile,
   signOutLocalProfile,
 } from '../lib/localProfile';
 import { useSettings } from '../context/SettingsContext';
+import {
+  getSavedLocationIds,
+  updateSavedLocationIds,
+} from '../lib/savedLocations';
 
 const BLUE = '#1A73E8';
-const LEGACY_STORAGE_KEY = 'ustp_saved_locations';
 
   type Coordinates = {
     latitude: number;
@@ -353,6 +355,9 @@ function createMapHtml() {
 }
 
 export default function CampusMapScreen() {
+  const { locationId } = useLocalSearchParams<{
+    locationId?: string;
+  }>();
   const { colors, t } = useSettings();
   const mapRef = useRef<WebView<unknown>>(null);
 
@@ -367,7 +372,6 @@ export default function CampusMapScreen() {
 
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [currentProfile, setCurrentProfile] = useState<LocalProfile | null>(null);
-  const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [savedLoaded, setSavedLoaded] = useState(false);
   const [walkingRoute, setWalkingRoute] =
     useState<WalkingRoute | null>(null);
@@ -407,6 +411,7 @@ export default function CampusMapScreen() {
   const locationSubscription =
     useRef<Location.LocationSubscription | null>(null);
 
+  const lastHandledLocationId = useRef<string | null>(null);
   const activeStepRef = useRef(0);
 
   const offRouteCountRef = useRef(0);
@@ -676,60 +681,32 @@ export default function CampusMapScreen() {
     useCallback(() => {
       let active = true;
 
-      getCurrentProfile()
-        .then(profile => {
-          if (active) setCurrentProfile(profile);
-        })
-        .catch(error => {
-          console.error('Could not refresh local profile:', error);
-        });
+      async function refreshMapData() {
+        try {
+          const [profile, savedIds] = await Promise.all([
+            getCurrentProfile(),
+            getSavedLocationIds(),
+          ]);
+          if (active) {
+            setCurrentProfile(profile);
+            setSavedIds(savedIds);
+            setSavedLoaded(true);
+          }
+        } catch (error) {
+          console.error('Could not refresh map data:', error);
+          if (active) {
+            Alert.alert('Error', 'Could not load your profile or saved locations.');
+          }
+        }
+      }
+
+      void refreshMapData();
 
       return () => {
         active = false;
       };
     }, [])
   );
-
-  useEffect(() => {
-    async function loadSavedLocations() {
-      try {
-        const profile = await getCurrentProfile();
-        setCurrentProfile(profile);
-
-        const storageKey = profile
-          ? getSavedLocationsKey(profile.email)
-          : LEGACY_STORAGE_KEY;
-
-        let stored = await AsyncStorage.getItem(storageKey);
-
-        // Keep saved places from the earlier single-profile version when possible.
-        if (!stored && profile) {
-          const legacySaved = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
-
-          if (legacySaved) {
-            stored = legacySaved;
-            await AsyncStorage.setItem(storageKey, legacySaved);
-            await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
-          }
-        }
-
-        if (stored) {
-          const parsed: unknown = JSON.parse(stored);
-
-          if (Array.isArray(parsed)) {
-            setSavedIds(parsed.map(String));
-          }
-        }
-      } catch (error) {
-        console.error('Could not load saved locations:', error);
-        Alert.alert('Error', 'Could not load your saved locations.');
-      } finally {
-        setSavedLoaded(true);
-      }
-    }
-
-    loadSavedLocations();
-  }, []);
 
   const filtered = useMemo(() => {
     return campusLocations.filter(place => {
@@ -740,12 +717,9 @@ export default function CampusMapScreen() {
         .toLowerCase()
         .includes(query.trim().toLowerCase());
 
-      const matchesSaved =
-        !showSavedOnly || savedIds.includes(String(place.id));
-
-      return matchesCategory && matchesSearch && matchesSaved;
+      return matchesCategory && matchesSearch;
     });
-  }, [query, category, showSavedOnly, savedIds]);
+  }, [query, category]);
 
   // Update markers without reloading the map.
   useEffect(() => {
@@ -806,11 +780,7 @@ export default function CampusMapScreen() {
     setSavedIds(updated);
 
     try {
-      const storageKey = currentProfile
-        ? getSavedLocationsKey(currentProfile.email)
-        : LEGACY_STORAGE_KEY;
-
-      await AsyncStorage.setItem(storageKey, JSON.stringify(updated));
+      await updateSavedLocationIds(updated);
     } catch (error) {
       setSavedIds(previous);
       console.error('Could not save location:', error);
@@ -829,6 +799,34 @@ export default function CampusMapScreen() {
       `window.focusLocation(${place.latitude}, ${place.longitude}, 19); true;`
     );
   }
+
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        !mapReady ||
+        typeof locationId !== 'string' ||
+        lastHandledLocationId.current === locationId
+      ) {
+        return;
+      }
+
+      const place = campusLocations.find(
+        item => String(item.id) === locationId
+      );
+
+      if (!place) return;
+
+      lastHandledLocationId.current = locationId;
+      setWalkingRoute(null);
+      setSelected(place);
+      setSheetExpanded(false);
+      setQuery('');
+
+      mapRef.current?.injectJavaScript(
+        `window.focusLocation(${place.latitude}, ${place.longitude}, 19); true;`
+      );
+    }, [mapReady, locationId])
+  );
 
   async function locateMe() {
     try {
@@ -974,16 +972,7 @@ function stopNavigation() {
     }
   }
 
-  function openSavedLocations() {
-    setShowSavedOnly(true);
-    setDrawerOpen(false);
-    setSelected(null);
-    setQuery('');
-    setCategory('All');
-  }
-
   function showAllLocations() {
-    setShowSavedOnly(false);
     setDrawerOpen(false);
     setSelected(null);
     setQuery('');
@@ -1054,11 +1043,7 @@ function stopNavigation() {
 
             <TextInput
               style={styles.searchInput}
-              placeholder={
-                showSavedOnly
-                  ? 'Search saved locations'
-                  : 'Search campus locations'
-              }
+              placeholder="Search campus locations"
               placeholderTextColor="#8793A1"
               value={query}
               onChangeText={setQuery}
@@ -1143,21 +1128,6 @@ function stopNavigation() {
           </Pressable>
         </View>
 
-        {/* SAVED LOCATIONS */}
-        {showSavedOnly && (
-          <View style={styles.savedBanner}>
-            <Ionicons name="bookmark" size={18} color={BLUE} />
-
-            <Text style={styles.savedBannerText}>
-              Saved Locations ({filtered.length})
-            </Text>
-
-            <Pressable onPress={showAllLocations}>
-              <Text style={styles.showAllText}>Show All</Text>
-            </Pressable>
-          </View>
-        )}
-
         {/* SELECTED LOCATION — compact by default, expandable by dragging the handle */}
         {selected && (
           <View
@@ -1173,32 +1143,52 @@ function stopNavigation() {
               <View style={styles.handle} />
             </View>
 
-            <View style={styles.placeHeader}>
-              <View style={styles.placeIcon}>
-                <Ionicons name="location" size={22} color={BLUE} />
-              </View>
-
-              <View style={styles.placeTitleContainer}>
-                <Text style={styles.placeName} numberOfLines={1}>
-                  {selected.name}
-                </Text>
-                <Text style={styles.placeCategory} numberOfLines={1}>
-                  {selected.category} · USTP CDO
-                </Text>
-              </View>
-
-              {!isNavigating && (
-                <Pressable
-                  style={styles.closePlaceButton}
-                  onPress={() => {
-                    setSelected(null);
-                    setSheetExpanded(false);
-                  }}
-                  hitSlop={10}
-                >
-                  <Ionicons name="close" size={21} color="#718096" />
-                </Pressable>
+            <View style={styles.locationInfo}>
+              {selected.image && (
+                <Image
+                  source={selected.image}
+                  style={styles.locationPhoto}
+                  resizeMode="cover"
+                />
               )}
+
+              <View style={styles.placeHeader}>
+                <View style={styles.placeIcon}>
+                  <Ionicons name="location" size={22} color={BLUE} />
+                </View>
+
+                <View style={styles.placeTitleContainer}>
+                  <Text
+                    style={[styles.locationTitle, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {selected.name.toUpperCase()}
+                  </Text>
+                  <Text
+                    style={[styles.locationCategory, { color: BLUE }]}
+                    numberOfLines={1}
+                  >
+                    {selected.category} - USTP CDO
+                  </Text>
+                </View>
+
+                {!isNavigating && (
+                  <Pressable
+                    style={styles.closePlaceButton}
+                    onPress={() => {
+                      setSelected(null);
+                      setSheetExpanded(false);
+                    }}
+                    hitSlop={10}
+                  >
+                    <Ionicons name="close" size={21} color="#718096" />
+                  </Pressable>
+                )}
+              </View>
+
+              <Text style={[styles.locationDescription, { color: colors.secondaryText }]}>
+                {selected.description}
+              </Text>
             </View>
 
             {walkingRoute ? (
@@ -1225,11 +1215,7 @@ function stopNavigation() {
                   </View>
                 )}
               </View>
-            ) : (
-              <Text style={styles.compactDescription} numberOfLines={1}>
-                {selected.description}
-              </Text>
-            )}
+            ) : null}
 
             {isNavigating && walkingRoute && (
               <View style={styles.compactInstruction}>
@@ -1307,10 +1293,6 @@ function stopNavigation() {
                 showsVerticalScrollIndicator={false}
                 nestedScrollEnabled
               >
-                <Text style={styles.description}>
-                  {selected.description}
-                </Text>
-
                 {walkingRoute && (
                   <View style={styles.expandedRouteSummary}>
                     <View style={styles.routeInfo}>
@@ -1540,11 +1522,8 @@ function stopNavigation() {
                 icon="business-outline"
                 label="Explore Buildings"
                 onPress={() => {
-                  setShowSavedOnly(false);
-                  setCategory('All');
-                  setQuery('');
-                  setSelected(null);
                   setDrawerOpen(false);
+                  router.push('/explore');
                 }}
               />
 
@@ -1553,7 +1532,10 @@ function stopNavigation() {
               <DrawerItem
                 icon="bookmark-outline"
                 label={`Saved Locations (${savedIds.length})`}
-                onPress={openSavedLocations}
+                onPress={() => {
+                  setDrawerOpen(false);
+                  router.push('/saved');
+                }}
               />
 
               <DrawerItem
@@ -1816,6 +1798,28 @@ const styles = StyleSheet.create({
   placeCardExpanded: {
     maxHeight: '78%',
   },
+  locationInfo: {
+    width: '100%',
+    gap: 8,
+  },
+  locationPhoto: {
+    width: '100%',
+    height: 190,
+    borderRadius: 14,
+    backgroundColor: '#E5E7EB',
+  },
+  locationTitle: {
+    fontSize: 19,
+    fontWeight: '800',
+  },
+  locationCategory: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  locationDescription: {
+    fontSize: 13,
+    lineHeight: 20,
+  },
   sheetHandleArea: {
     height: 22,
     alignItems: 'center',
@@ -2007,6 +2011,21 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: '#68778D',
     marginTop: 12,
+  },
+  photo: {
+    width: '100%',
+    height: 160,
+    borderRadius: 14,
+    marginTop: 12,
+  },
+  photoPlaceholder: {
+    width: '100%',
+    height: 160,
+    borderRadius: 14,
+    marginTop: 12,
+    backgroundColor: '#EAF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   actions: {
     flexDirection: 'row',
