@@ -34,6 +34,7 @@ import {
   LocalProfile,
   signOutLocalProfile,
 } from '../lib/localProfile';
+import { useSettings } from '../context/SettingsContext';
 
 const BLUE = '#1A73E8';
 const LEGACY_STORAGE_KEY = 'ustp_saved_locations';
@@ -352,6 +353,7 @@ function createMapHtml() {
 }
 
 export default function CampusMapScreen() {
+  const { colors, t } = useSettings();
   const mapRef = useRef<WebView<unknown>>(null);
 
 
@@ -412,10 +414,6 @@ export default function CampusMapScreen() {
   const lastRerouteAtRef = useRef(0);
 
   const mapHtml = useMemo(() => createMapHtml(), []);
-
-  useEffect(() => {
-    setSheetExpanded(false);
-  }, [selected?.id]);
 
   const rerouteFromCurrentLocation = useCallback(
     async (currentPosition: Coordinates) => {
@@ -822,6 +820,7 @@ export default function CampusMapScreen() {
 
   function focusLocation(place: (typeof campusLocations)[number]) {
     setWalkingRoute(null);
+    setSheetExpanded(false);
     setSelected(place);
     setQuery('');
     Keyboard.dismiss();
@@ -1002,6 +1001,7 @@ function stopNavigation() {
 
         if (place) {
           setWalkingRoute(null);
+          setSheetExpanded(false);
           setSelected(place);
         }
       }
@@ -1017,7 +1017,10 @@ function stopNavigation() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView
+      style={[styles.safe, { backgroundColor: colors.background }]}
+      edges={['top']}
+    >
       <View style={styles.container}>
         <WebView<unknown>
           ref={mapRef}
@@ -1425,8 +1428,13 @@ function stopNavigation() {
               onPress={() => setDrawerOpen(false)}
             />
 
-            <View style={styles.drawer}>
-              <View style={styles.drawerHeader}>
+            <View style={[styles.drawer, { backgroundColor: colors.card }]}>
+              <View
+                style={[
+                  styles.drawerHeader,
+                  { backgroundColor: colors.surface },
+                ]}
+              >
                 <View style={styles.drawerBrandRow}>
                   <View style={styles.drawerLogo}>
                     <Ionicons
@@ -1437,24 +1445,42 @@ function stopNavigation() {
                   </View>
 
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.drawerTitle}>
+                    <Text
+                      style={[styles.drawerTitle, { color: colors.text }]}
+                    >
                       USTP CDO
                     </Text>
 
-                    <Text style={styles.drawerSubtitle}>
+                    <Text
+                      style={[
+                        styles.drawerSubtitle,
+                        { color: colors.secondaryText },
+                      ]}
+                    >
                       CAMPUS NAVIGATOR
                     </Text>
                   </View>
                 </View>
 
                 <Pressable
-                  style={styles.drawerProfileRow}
+                  style={[
+                    styles.drawerProfileRow,
+                    { borderTopColor: colors.border },
+                  ]}
                   onPress={() => {
                     setDrawerOpen(false);
                     router.push('/profile');
                   }}
                 >
-                  <View style={styles.drawerAvatar}>
+                  <View
+                    style={[
+                      styles.drawerAvatar,
+                      {
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                  >
                     <Text style={styles.drawerAvatarText}>
                       {(currentProfile?.name || 'Guest')
                         .trim()
@@ -1467,14 +1493,20 @@ function stopNavigation() {
 
                   <View style={{ flex: 1 }}>
                     <Text
-                      style={styles.drawerProfileName}
+                      style={[
+                        styles.drawerProfileName,
+                        { color: colors.text },
+                      ]}
                       numberOfLines={1}
                     >
                       {currentProfile?.name ?? 'Local profile'}
                     </Text>
 
                     <Text
-                      style={styles.drawerProfileEmail}
+                      style={[
+                        styles.drawerProfileEmail,
+                        { color: colors.secondaryText },
+                      ]}
                       numberOfLines={1}
                     >
                       {currentProfile?.email ?? 'Tap to set up your profile'}
@@ -1484,7 +1516,7 @@ function stopNavigation() {
                   <Ionicons
                     name="chevron-forward"
                     size={18}
-                    color="#718096"
+                    color={colors.secondaryText}
                   />
                 </Pressable>
               </View>
@@ -1539,18 +1571,16 @@ function stopNavigation() {
 
               <DrawerItem
                 icon="settings-outline"
-                label="Settings"
+                label={t('settings')}
                 onPress={() => {
                   setDrawerOpen(false);
-
-                  Alert.alert(
-                    'Settings',
-                    'More settings will be added in a future update.'
-                  );
+                  router.push('/settings');
                 }}
               />
 
-              <View style={styles.divider} />
+              <View
+                style={[styles.divider, { backgroundColor: colors.border }]}
+              />
 
               <DrawerItem
                 icon="log-out-outline"
@@ -1606,6 +1636,8 @@ function DrawerItem({
   label: string;
   onPress: () => void;
 }) {
+  const { colors } = useSettings();
+
   return (
     <Pressable
       style={styles.drawerItem}
@@ -1614,10 +1646,10 @@ function DrawerItem({
       <Ionicons
         name={icon}
         size={22}
-        color="#526174"
+        color={colors.secondaryText}
       />
 
-      <Text style={styles.drawerLabel}>
+      <Text style={[styles.drawerLabel, { color: colors.mutedText }]}>
         {label}
       </Text>
     </Pressable>
