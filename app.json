@@ -15,7 +15,8 @@
           "androidGoogleMapsApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-font"
     ],
     "android": {
       "package": "com.shem.ustpcampusnavigator"

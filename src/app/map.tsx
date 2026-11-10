@@ -33,6 +33,8 @@ import {
   signOutLocalProfile,
 } from '../lib/localProfile';
 
+import { useSettings } from '../context/SettingsContext';
+
 const BLUE = '#1A73E8';
 const LEGACY_STORAGE_KEY = 'ustp_saved_locations';
 
@@ -246,6 +248,8 @@ function createMapHtml() {
 }
 
 export default function CampusMapScreen() {
+  const { colors, t, theme } = useSettings();
+
   const mapRef = useRef<WebView>(null);
 
   const [mapReady, setMapReady] = useState(false);
@@ -561,7 +565,7 @@ export default function CampusMapScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView style={[styles.safe,{ backgroundColor: colors.background },]}edges={['top']}>
       <View style={styles.container}>
         <WebView
           ref={mapRef}
@@ -869,7 +873,7 @@ export default function CampusMapScreen() {
               onPress={() => setDrawerOpen(false)}
             />
 
-            <View style={styles.drawer}>
+            <View style={[styles.drawer,{ backgroundColor: colors.card },]}>
               <View style={styles.drawerHeader}>
                 <View style={styles.drawerBrandRow}>
                   <View style={styles.drawerLogo}>
@@ -993,14 +997,10 @@ export default function CampusMapScreen() {
 
               <DrawerItem
                 icon="settings-outline"
-                label="Settings"
+                label={t('settings')}
                 onPress={() => {
                   setDrawerOpen(false);
-
-                  Alert.alert(
-                    'Settings',
-                    'More settings will be added in a future update.'
-                  );
+                  router.push('/settings');
                 }}
               />
 
