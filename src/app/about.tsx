@@ -23,11 +23,23 @@ const teamMembers = [
   {
     name: 'Christian Jay Galceran',
     role: 'Developer',
-    image: require('../../assets/images/GALCERAN.jpg'),
+    image: require('../../assets/images/GALCERAN.png'),
   },
-  { name: 'Vanley John Monares', role: 'Developer' },
-  { name: 'Shann Gee Caharían', role: 'Developer' },
-  { name: 'Jandy Ombod', role: 'Developer' },
+  {
+    name: 'Vanley John Monares',
+    role: 'Developer',
+    image: require('../../assets/images/MONARES.jpg'),
+  },
+  {
+    name: 'Shann Gee Caharian',
+    role: 'Developer',
+    image: require('../../assets/images/CAHARIAN.jpg'),
+  },
+  {
+    name: 'Jandy Ombod',
+    role: 'Developer',
+    image: require('../../assets/images/OMBOD.jpg'),
+  },
 ];
 
 export default function AboutScreen() {

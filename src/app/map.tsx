@@ -10,6 +10,8 @@ import {
   Alert,
   Keyboard,
   PanResponder,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
@@ -387,8 +389,70 @@ export default function CampusMapScreen() {
 
   const [offRoute, setOffRoute] = useState(false);
 
-  // The place sheet opens in its compact State 1 layout.
-  const [sheetExpanded, setSheetExpanded] = useState(false);
+  // Three-position draggable bottom sheet.
+  const [sheetLevel, setSheetLevel] = useState(0);
+  const sheetExpanded = sheetLevel > 0;
+  const screenHeight = Dimensions.get('window').height;
+
+  const sheetSnapPoints = useMemo(
+    () => {
+      const peekHeight = Math.min(340, Math.round(screenHeight * 0.44));
+      const middleHeight = Math.max(
+        peekHeight + 56,
+        Math.round(screenHeight * 0.48)
+      );
+      const expandedHeight = Math.max(
+        middleHeight + 56,
+        Math.round(screenHeight * 0.78)
+      );
+
+      return [peekHeight, middleHeight, expandedHeight];
+    },
+    [screenHeight]
+  );
+
+  const [sheetHeight] = useState(
+    () => new Animated.Value(sheetSnapPoints[0])
+  );
+  const sheetHeightRef = useRef(sheetSnapPoints[0]);
+  const sheetStartHeightRef = useRef(sheetSnapPoints[0]);
+
+  useEffect(() => {
+    const listenerId = sheetHeight.addListener(({ value }) => {
+      sheetHeightRef.current = value;
+    });
+
+    return () => {
+      sheetHeight.removeListener(listenerId);
+    };
+  }, [sheetHeight]);
+
+  const snapSheet = useCallback(
+    (level: number) => {
+      const safeLevel = Math.max(0, Math.min(2, level));
+      const targetHeight = sheetSnapPoints[safeLevel];
+
+      setSheetLevel(safeLevel);
+
+      Animated.spring(sheetHeight, {
+        toValue: targetHeight,
+        useNativeDriver: false,
+        damping: 26,
+        stiffness: 220,
+        mass: 0.8,
+      }).start();
+    },
+    [sheetHeight, sheetSnapPoints]
+  );
+
+  // Keep compatibility with the existing calls throughout map.tsx.
+  const setSheetExpanded = useCallback(
+    (expanded: boolean) => {
+      snapSheet(expanded ? 2 : 0);
+    },
+    [snapSheet]
+  );
+
   const categories = useMemo(
     () => [
       'All',
@@ -399,21 +463,49 @@ export default function CampusMapScreen() {
 
   const sheetPanResponder = useMemo(
     () =>
+      // PanResponder reads these refs only from gesture callbacks, not during render.
+      // eslint-disable-next-line react-hooks/refs
       PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_event, gestureState) =>
-          Math.abs(gestureState.dy) > 8 &&
-          Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
+          Math.abs(gestureState.dy) > 5,
+        onPanResponderGrant: () => {
+          sheetStartHeightRef.current = sheetHeightRef.current;
+        },
+        onPanResponderMove: (_event, gestureState) => {
+          const nextHeight = Math.max(
+            sheetSnapPoints[0],
+            Math.min(
+              sheetSnapPoints[2],
+              sheetStartHeightRef.current - gestureState.dy
+            )
+          );
+
+          sheetHeight.setValue(nextHeight);
+        },
         onPanResponderRelease: (_event, gestureState) => {
-          if (gestureState.dy < -25) {
-            setSheetExpanded(true);
-          } else if (gestureState.dy > 25) {
-            // Collapse only. A downward swipe must never dismiss the sheet.
-            setSheetExpanded(false);
-          }
+          const projectedHeight =
+            sheetHeightRef.current - gestureState.vy * 160;
+
+          let closestLevel = 0;
+          let closestDifference = Infinity;
+
+          sheetSnapPoints.forEach((point, index) => {
+            const difference = Math.abs(point - projectedHeight);
+
+            if (difference < closestDifference) {
+              closestDifference = difference;
+              closestLevel = index;
+            }
+          });
+
+          snapSheet(closestLevel);
+        },
+        onPanResponderTerminate: () => {
+          snapSheet(sheetLevel);
         },
       }),
-    []
+    [sheetHeight, sheetSnapPoints, snapSheet, sheetLevel]
   );
 
   const locationSubscription =
@@ -833,7 +925,7 @@ export default function CampusMapScreen() {
       mapRef.current?.injectJavaScript(
         `window.focusLocation(${place.latitude}, ${place.longitude}, 19); true;`
       );
-    }, [mapReady, locationId])
+    }, [mapReady, locationId, setSheetExpanded])
   );
 
   async function locateMe() {
@@ -1218,11 +1310,11 @@ function stopNavigation() {
 
         {/* SELECTED LOCATION — compact by default, expandable by dragging the handle */}
         {selected && !focusMode && (
-          <View
+          <Animated.View
             style={[
               styles.placeCard,
               { backgroundColor: colors.card, borderColor: colors.border },
-              sheetExpanded && styles.placeCardExpanded,
+              { height: sheetHeight },
             ]}
           >
             <View
@@ -1236,8 +1328,12 @@ function stopNavigation() {
               {selected.image && (
                 <Image
                   source={selected.image}
-                  style={styles.locationPhoto}
+                  style={[
+                    styles.locationPhoto,
+                    sheetLevel === 0 && styles.locationPhotoPeek,
+                  ]}
                   resizeMode="cover"
+                  accessibilityLabel={`${selected.name} photo`}
                 />
               )}
 
@@ -1275,9 +1371,16 @@ function stopNavigation() {
                 )}
               </View>
 
-              <Text style={[styles.locationDescription, { color: colors.secondaryText }]}>
-                {selected.description}
-              </Text>
+              {sheetLevel >= 1 && (
+                <Text
+                  style={[
+                    styles.locationDescription,
+                    { color: colors.secondaryText },
+                  ]}
+                >
+                  {selected.description}
+                </Text>
+              )}
             </View>
 
             {walkingRoute ? (
@@ -1474,6 +1577,67 @@ function stopNavigation() {
                   </View>
                 )}
 
+                {isNavigating && walkingRoute && (
+                  <View style={styles.stepsList}>
+                    <Text style={styles.stepsListTitle}>
+                      Walking directions
+                    </Text>
+
+                    {walkingRoute.steps.map((step, index) => {
+                      const isCurrent = index === activeStepIndex;
+                      const isCompleted = index < activeStepIndex;
+
+                      return (
+                        <View
+                          key={`step-${index}`}
+                          style={[
+                            styles.stepRow,
+                            isCurrent && styles.currentStepRow,
+                          ]}
+                        >
+                          <View
+                            style={[
+                              styles.stepNumber,
+                              isCurrent && styles.currentStepNumber,
+                              isCompleted && styles.completedStepNumber,
+                            ]}
+                          >
+                            <Ionicons
+                              name={
+                                isCompleted
+                                  ? 'checkmark'
+                                  : isCurrent
+                                    ? 'navigate'
+                                    : 'walk-outline'
+                              }
+                              size={16}
+                              color={
+                                isCurrent || isCompleted ? '#FFFFFF' : '#64748B'
+                              }
+                            />
+                          </View>
+
+                          <Text
+                            style={[
+                              styles.stepInstruction,
+                              isCurrent && styles.currentStepInstruction,
+                              isCompleted && styles.completedStepInstruction,
+                            ]}
+                          >
+                            {step.instruction}
+                          </Text>
+
+                          {isCurrent && (
+                            <View style={styles.stepNowBadge}>
+                              <Text style={styles.stepNowText}>NOW</Text>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
                 {!isNavigating && (
                   <View style={styles.expandedSecondaryActions}>
                     <Pressable
@@ -1515,7 +1679,7 @@ function stopNavigation() {
                 )}
               </ScrollView>
             )}
-          </View>
+          </Animated.View>
         )}
 
         {/* NAVIGATION FOCUS MODE */}
@@ -2069,10 +2233,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 14,
     zIndex: 9,
-    maxHeight: '78%',
-  },
-  placeCardExpanded: {
-    maxHeight: '78%',
+    overflow: 'hidden',
   },
   locationInfo: {
     width: '100%',
@@ -2083,6 +2244,9 @@ const styles = StyleSheet.create({
     height: 190,
     borderRadius: 17,
     backgroundColor: '#E5E7EB',
+  },
+  locationPhotoPeek: {
+    height: 100,
   },
   locationTitle: {
     fontSize: 18,
@@ -2204,9 +2368,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   expandedSheetContent: {
-    flexGrow: 0,
-    maxHeight: 300,
-    marginTop: 4,
+    flex: 1,
+    minHeight: 0,
+    marginTop: 8,
   },
   expandedRouteSummary: {
     flexDirection: 'row',
@@ -2803,6 +2967,67 @@ routeLabel: {
   focusEndButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
+    fontWeight: '900',
+  },
+  stepsList: {
+    marginTop: 18,
+    paddingBottom: 18,
+  },
+  stepsListTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#1D2D40',
+    marginBottom: 12,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    marginBottom: 5,
+  },
+  currentStepRow: {
+    backgroundColor: '#EAF2FF',
+  },
+  stepNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  currentStepNumber: {
+    backgroundColor: BLUE,
+  },
+  completedStepNumber: {
+    backgroundColor: '#16834A',
+  },
+  stepInstruction: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  currentStepInstruction: {
+    color: '#1D2D40',
+    fontWeight: '900',
+  },
+  completedStepInstruction: {
+    color: '#94A3B8',
+  },
+  stepNowBadge: {
+    backgroundColor: BLUE,
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  stepNowText: {
+    color: '#FFFFFF',
+    fontSize: 9,
     fontWeight: '900',
   },
 });
