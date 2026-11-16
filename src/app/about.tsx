@@ -43,8 +43,8 @@ const teamMembers = [
 ];
 
 export default function AboutScreen() {
-  const { theme } = useSettings();
-  const isDark = theme === 'dark';
+  const { resolvedTheme } = useSettings();
+  const isDark = resolvedTheme === 'dark';
 
   const colors = {
     background: isDark ? '#101820' : '#F4F7FA',

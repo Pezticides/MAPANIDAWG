@@ -4,11 +4,11 @@ import { StatusBar } from 'expo-status-bar';
 import { SettingsProvider, useSettings } from '../context/SettingsContext';
 
 function AppNavigation() {
-  const { theme } = useSettings();
+  const { resolvedTheme } = useSettings();
 
   return (
     <>
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <StatusBar style={resolvedTheme === 'dark' ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
           headerShown: false,

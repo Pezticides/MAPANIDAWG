@@ -33,9 +33,9 @@ import {
 import {
   getCurrentProfile,
   LocalProfile,
-  signOutLocalProfile,
 } from '../lib/localProfile';
 import { useSettings } from '../context/SettingsContext';
+import type { MapPreferences } from '../context/SettingsContext';
 import {
   getSavedLocationIds,
   updateSavedLocationIds,
@@ -128,8 +128,10 @@ const BLUE = '#1A73E8';
   }
 
 // Leaflet + OpenStreetMap. No Google Maps API key required.
-function createMapHtml() {
+function createMapHtml(preferences: MapPreferences) {
   const locationsJson = JSON.stringify(campusLocations)
+    .replace(/</g, '\\u003c');
+  const preferencesJson = JSON.stringify(preferences)
     .replace(/</g, '\\u003c');
 
   return `<!DOCTYPE html>
@@ -170,12 +172,15 @@ function createMapHtml() {
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   const initialLocations = ${locationsJson};
+  let mapPreferences = ${preferencesJson};
+  let showCampusMarkers = mapPreferences.showMarkers;
+  let showCurrentLocation = mapPreferences.showCurrentLocation;
 
   const map = L.map('map', {
     zoomControl: false
   }).setView(
     [${CAMPUS_CENTER.latitude}, ${CAMPUS_CENTER.longitude}],
-    17
+    mapPreferences.defaultZoom
   );
 
   L.control.zoom({ position: 'bottomleft' }).addTo(map);
@@ -188,13 +193,12 @@ function createMapHtml() {
   function setBaseLayer(type) {
     if (tileLayer) map.removeLayer(tileLayer);
 
-    if (type === 'carto') {
+    if (type === 'satellite') {
       tileLayer = L.tileLayer(
-        'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         {
-          attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-          subdomains: 'abcd',
-          maxZoom: 20
+          attribution: 'Tiles &copy; Esri',
+          maxZoom: 19
         }
       );
     } else {
@@ -210,7 +214,7 @@ function createMapHtml() {
     tileLayer.addTo(map);
   }
 
-  setBaseLayer('osm');
+  setBaseLayer(mapPreferences.mapType);
 
   function sendMessage(data) {
     window.ReactNativeWebView.postMessage(JSON.stringify(data));
@@ -245,9 +249,34 @@ function createMapHtml() {
         sendMessage({ type: 'marker', id: String(place.id) });
       });
 
-      marker.addTo(map);
+      if (showCampusMarkers) marker.addTo(map);
       markers.push(marker);
     });
+  }
+
+  function setMapPreferences(preferences) {
+    mapPreferences = preferences;
+    showCampusMarkers = preferences.showMarkers;
+    showCurrentLocation = preferences.showCurrentLocation;
+
+    setBaseLayer(preferences.mapType);
+    markers.forEach(marker => {
+      if (showCampusMarkers) {
+        marker.addTo(map);
+      } else {
+        map.removeLayer(marker);
+      }
+    });
+
+    if (userMarker) {
+      if (showCurrentLocation) {
+        userMarker.addTo(map);
+      } else {
+        map.removeLayer(userMarker);
+      }
+    }
+
+    map.setZoom(preferences.defaultZoom);
   }
 
   function escapeHtml(value) {
@@ -273,10 +302,12 @@ function createMapHtml() {
       weight: 3,
       fillColor: '#4285F4',
       fillOpacity: 1
-    }).addTo(map);
+    });
+
+    if (showCurrentLocation) userMarker.addTo(map);
 
     userMarker.bindPopup('Your location');
-    focusLocation(lat, lng, 18);
+    if (showCurrentLocation) focusLocation(lat, lng, 18);
   }
 
   function updateUserLocation(lat, lng, follow) {
@@ -289,11 +320,17 @@ function createMapHtml() {
         weight: 3,
         fillColor: '#4285F4',
         fillOpacity: 1
-      }).addTo(map);
+      });
 
       userMarker.bindPopup('Your location');
     } else {
       userMarker.setLatLng(position);
+    }
+
+    if (showCurrentLocation) {
+      userMarker.addTo(map);
+    } else {
+      map.removeLayer(userMarker);
     }
 
     if (follow) {
@@ -345,7 +382,7 @@ function createMapHtml() {
   window.setCampusData = setCampusData;
   window.focusLocation = focusLocation;
   window.showUserLocation = showUserLocation;
-  window.setBaseLayer = setBaseLayer;
+  window.setMapPreferences = setMapPreferences;
   window.updateUserLocation = updateUserLocation;
   window.drawWalkingRoute = drawWalkingRoute;
   window.clearWalkingRoute = clearWalkingRoute;
@@ -360,7 +397,12 @@ export default function CampusMapScreen() {
   const { locationId } = useLocalSearchParams<{
     locationId?: string;
   }>();
-  const { colors, t } = useSettings();
+  const {
+    colors,
+    mapPreferences,
+    t,
+    updateMapPreferences,
+  } = useSettings();
   const mapRef = useRef<WebView<unknown>>(null);
 
 
@@ -370,8 +412,6 @@ export default function CampusMapScreen() {
     useState<(typeof campusLocations)[number] | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [category, setCategory] = useState('All');
-  const [baseLayer, setBaseLayer] = useState<'osm' | 'carto'>('osm');
-
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [currentProfile, setCurrentProfile] = useState<LocalProfile | null>(null);
   const [savedLoaded, setSavedLoaded] = useState(false);
@@ -518,7 +558,7 @@ export default function CampusMapScreen() {
   const rerouteInProgressRef = useRef(false);
   const lastRerouteAtRef = useRef(0);
 
-  const mapHtml = useMemo(() => createMapHtml(), []);
+  const [mapHtml] = useState(() => createMapHtml(mapPreferences));
 
   const rerouteFromCurrentLocation = useCallback(
     async (currentPosition: Coordinates) => {
@@ -676,6 +716,7 @@ export default function CampusMapScreen() {
             locationSubscription.current = null;
 
             setIsNavigating(false);
+            setFocusMode(false);
             setOffRoute(false);
 
             Speech.stop().then(() => {
@@ -840,9 +881,24 @@ export default function CampusMapScreen() {
     if (!mapReady) return;
 
     mapRef.current?.injectJavaScript(
-      `window.setBaseLayer(${JSON.stringify(baseLayer)}); true;`
+      `window.setMapPreferences(${JSON.stringify(mapPreferences)}); true;`
     );
-  }, [baseLayer, mapReady]);
+  }, [mapPreferences, mapReady]);
+
+  async function toggleMapType() {
+    try {
+      await updateMapPreferences({
+        mapType:
+          mapPreferences.mapType === 'standard' ? 'satellite' : 'standard',
+      });
+    } catch (error) {
+      console.error('Could not update map type:', error);
+      Alert.alert(
+        'Could not change map style',
+        error instanceof Error ? error.message : 'Please try again.'
+      );
+    }
+  }
 
   // Draw or remove the walking route on the Leaflet map.
   useEffect(() => {
@@ -978,6 +1034,7 @@ export default function CampusMapScreen() {
     setOffRoute(false);
 
     setIsNavigating(true);
+    snapSheet(1);
 
     const firstInstruction =
       walkingRoute.steps[0]?.instruction;
@@ -1001,7 +1058,6 @@ function stopNavigation() {
   locationSubscription.current = null;
 
   setIsNavigating(false);
-  setFocusMode(false);
   setOffRoute(false);
 
   offRouteCountRef.current = 0;
@@ -1132,7 +1188,7 @@ function stopNavigation() {
 
         {/* TOP BAR */}
         {!focusMode && (
-          <View style={styles.topBar}>
+        <View style={styles.topBar}>
             <Pressable
               style={[
                 styles.iconButton,
@@ -1178,7 +1234,7 @@ function stopNavigation() {
                 </Pressable>
               )}
             </View>
-          </View>
+        </View>
         )}
 
         {!focusMode && query.length === 0 && (
@@ -1291,11 +1347,7 @@ function stopNavigation() {
                 styles.mapControlButton,
                 { backgroundColor: colors.card, borderColor: colors.border },
               ]}
-              onPress={() =>
-                setBaseLayer(current =>
-                  current === 'osm' ? 'carto' : 'osm'
-                )
-              }
+              onPress={() => void toggleMapType()}
               accessibilityRole="button"
               accessibilityLabel="Change map style"
             >
@@ -1321,7 +1373,9 @@ function stopNavigation() {
               style={styles.sheetHandleArea}
               {...sheetPanResponder.panHandlers}
             >
-              <View style={styles.handle} />
+              <View
+                style={[styles.handle, { backgroundColor: colors.border }]}
+              />
             </View>
 
             <View style={styles.locationInfo}>
@@ -1338,7 +1392,9 @@ function stopNavigation() {
               )}
 
               <View style={styles.placeHeader}>
-                <View style={styles.placeIcon}>
+                <View
+                  style={[styles.placeIcon, { backgroundColor: colors.surface }]}
+                >
                   <Ionicons name="location" size={22} color={BLUE} />
                 </View>
 
@@ -1359,14 +1415,20 @@ function stopNavigation() {
 
                 {!isNavigating && (
                   <Pressable
-                    style={styles.closePlaceButton}
+                    style={[
+                      styles.closePlaceButton,
+                      { backgroundColor: colors.surface },
+                    ]}
                     onPress={() => {
                       setSelected(null);
+                      setWalkingRoute(null);
                       setSheetExpanded(false);
                     }}
                     hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close place and clear walking route"
                   >
-                    <Ionicons name="close" size={21} color="#718096" />
+                    <Ionicons name="close" size={21} color={colors.secondaryText} />
                   </Pressable>
                 )}
               </View>
@@ -1384,19 +1446,29 @@ function stopNavigation() {
             </View>
 
             {walkingRoute ? (
-              <View style={styles.compactRouteRow}>
+              <View
+                style={[
+                  styles.compactRouteRow,
+                  { backgroundColor: colors.surface },
+                ]}
+              >
                 <View style={styles.compactMetric}>
                   <Ionicons name="walk-outline" size={18} color={BLUE} />
-                  <Text style={styles.compactMetricText}>
+                  <Text style={[styles.compactMetricText, { color: colors.text }]}>
                     {isNavigating
                       ? formatDistance(remainingDistance)
                       : formatDistance(walkingRoute.distance)}
                   </Text>
                 </View>
-                <View style={styles.metricDivider} />
+                <View
+                  style={[
+                    styles.metricDivider,
+                    { backgroundColor: colors.border },
+                  ]}
+                />
                 <View style={styles.compactMetric}>
                   <Ionicons name="time-outline" size={18} color={BLUE} />
-                  <Text style={styles.compactMetricText}>
+                  <Text style={[styles.compactMetricText, { color: colors.text }]}>
                     {Math.ceil(walkingRoute.duration / 60)} min
                   </Text>
                 </View>
@@ -1412,7 +1484,13 @@ function stopNavigation() {
             {isNavigating && walkingRoute && (
               <View style={styles.compactInstruction}>
                 <Ionicons name="walk" size={18} color={BLUE} />
-                <Text style={styles.compactInstructionText} numberOfLines={2}>
+                <Text
+                  style={[
+                    styles.compactInstructionText,
+                    { color: colors.text },
+                  ]}
+                  numberOfLines={2}
+                >
                   {walkingRoute.steps[activeStepIndex]?.instruction ??
                     'Continue following the blue route.'}
                 </Text>
@@ -1425,9 +1503,23 @@ function stopNavigation() {
                   <Pressable
                     style={styles.focusModeButton}
                     onPress={() => setFocusMode(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Enter focus mode"
                   >
                     <Ionicons name="scan" size={18} color="#FFFFFF" />
                     <Text style={styles.focusModeButtonText}>Focus Mode</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.expandDirectionsButton}
+                    onPress={() => snapSheet(2)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Expand walking directions"
+                  >
+                    <Ionicons name="list" size={18} color="#FFFFFF" />
+                    <Text style={styles.expandDirectionsButtonText}>
+                      Show Directions
+                    </Text>
                   </Pressable>
 
                   <Pressable
@@ -1454,7 +1546,10 @@ function stopNavigation() {
                         </Text>
                       </Pressable>
                       <Pressable
-                        style={styles.refreshRouteAction}
+                        style={[
+                          styles.refreshRouteAction,
+                          { backgroundColor: colors.surface },
+                        ]}
                         onPress={openDirections}
                         disabled={routeLoading}
                         accessibilityRole="button"
@@ -1484,7 +1579,10 @@ function stopNavigation() {
                         </Text>
                       </Pressable>
                       <Pressable
-                        style={styles.saveButton}
+                        style={[
+                          styles.saveButton,
+                          { backgroundColor: colors.surface },
+                        ]}
                         onPress={() => toggleSaved(selected.id)}
                       >
                         <Ionicons
@@ -1513,18 +1611,23 @@ function stopNavigation() {
                 nestedScrollEnabled
               >
                 {walkingRoute && (
-                  <View style={styles.expandedRouteSummary}>
+                  <View
+                    style={[
+                      styles.expandedRouteSummary,
+                      { backgroundColor: colors.surface },
+                    ]}
+                  >
                     <View style={styles.routeInfo}>
                       <Ionicons name="walk" size={20} color={BLUE} />
                       <View>
-                        <Text style={styles.routeValue}>
+                        <Text style={[styles.routeValue, { color: colors.text }]}>
                           {formatDistance(
                             isNavigating
                               ? remainingDistance
                               : walkingRoute.distance
                           )}
                         </Text>
-                        <Text style={styles.routeLabel}>
+                        <Text style={[styles.routeLabel, { color: colors.secondaryText }]}>
                           {isNavigating ? 'Remaining distance' : 'Walking distance'}
                         </Text>
                       </View>
@@ -1532,17 +1635,24 @@ function stopNavigation() {
                     <View style={styles.routeInfo}>
                       <Ionicons name="time-outline" size={20} color={BLUE} />
                       <View>
-                        <Text style={styles.routeValue}>
+                        <Text style={[styles.routeValue, { color: colors.text }]}>
                           {Math.ceil(walkingRoute.duration / 60)} min
                         </Text>
-                        <Text style={styles.routeLabel}>Estimated time</Text>
+                        <Text style={[styles.routeLabel, { color: colors.secondaryText }]}>
+                          Estimated time
+                        </Text>
                       </View>
                     </View>
                   </View>
                 )}
 
                 {isNavigating && walkingRoute && (
-                  <View style={styles.navigationPanel}>
+                  <View
+                    style={[
+                      styles.navigationPanel,
+                      { backgroundColor: colors.surface },
+                    ]}
+                  >
                     <View style={styles.navigationHeader}>
                       <Ionicons name="walk" size={21} color={BLUE} />
                       <Text style={styles.navigationTitle}>
@@ -1550,24 +1660,29 @@ function stopNavigation() {
                       </Text>
                     </View>
 
-                    <Text style={styles.nextInstruction}>
+                    <Text style={[styles.nextInstruction, { color: colors.text }]}>
                       {walkingRoute.steps[activeStepIndex]?.instruction ??
                         'Continue following the blue route.'}
                     </Text>
 
                     <View style={styles.navigationDistance}>
-                      <Text style={styles.remainingLabel}>
+                      <Text style={[styles.remainingLabel, { color: colors.secondaryText }]}>
                         Remaining distance
                       </Text>
-                      <Text style={styles.remainingValue}>
+                      <Text style={[styles.remainingValue, { color: colors.text }]}>
                         {formatDistance(remainingDistance)}
                       </Text>
                     </View>
 
                     {offRoute && (
-                      <View style={styles.offRouteWarning}>
+                      <View
+                        style={[
+                          styles.offRouteWarning,
+                          { backgroundColor: colors.selected },
+                        ]}
+                      >
                         <Ionicons name="warning" size={18} color="#D97706" />
-                        <Text style={styles.offRouteText}>
+                        <Text style={[styles.offRouteText, { color: colors.text }]}>
                           {isRerouting
                             ? 'Recalculating your walking route...'
                             : 'You are away from the walking route. A new route will be calculated.'}
@@ -1579,7 +1694,7 @@ function stopNavigation() {
 
                 {isNavigating && walkingRoute && (
                   <View style={styles.stepsList}>
-                    <Text style={styles.stepsListTitle}>
+                    <Text style={[styles.stepsListTitle, { color: colors.text }]}>
                       Walking directions
                     </Text>
 
@@ -1592,13 +1707,19 @@ function stopNavigation() {
                           key={`step-${index}`}
                           style={[
                             styles.stepRow,
-                            isCurrent && styles.currentStepRow,
+                            isCurrent && {
+                              backgroundColor: colors.selected,
+                            },
                           ]}
                         >
                           <View
                             style={[
                               styles.stepNumber,
                               isCurrent && styles.currentStepNumber,
+                              !isCurrent &&
+                                !isCompleted && {
+                                  backgroundColor: colors.border,
+                                },
                               isCompleted && styles.completedStepNumber,
                             ]}
                           >
@@ -1612,7 +1733,9 @@ function stopNavigation() {
                               }
                               size={16}
                               color={
-                                isCurrent || isCompleted ? '#FFFFFF' : '#64748B'
+                                isCurrent || isCompleted
+                                  ? '#FFFFFF'
+                                  : colors.secondaryText
                               }
                             />
                           </View>
@@ -1620,8 +1743,10 @@ function stopNavigation() {
                           <Text
                             style={[
                               styles.stepInstruction,
+                              { color: colors.secondaryText },
                               isCurrent && styles.currentStepInstruction,
-                              isCompleted && styles.completedStepInstruction,
+                              isCurrent && { color: colors.text },
+                              isCompleted && { color: colors.secondaryText },
                             ]}
                           >
                             {step.instruction}
@@ -1641,7 +1766,10 @@ function stopNavigation() {
                 {!isNavigating && (
                   <View style={styles.expandedSecondaryActions}>
                     <Pressable
-                      style={styles.expandedSaveButton}
+                      style={[
+                        styles.expandedSaveButton,
+                        { backgroundColor: colors.surface },
+                      ]}
                       onPress={() => toggleSaved(selected.id)}
                     >
                       <Ionicons
@@ -1662,18 +1790,37 @@ function stopNavigation() {
 
                     {walkingRoute && (
                       <Pressable
-                        style={styles.clearRouteButton}
+                        style={[
+                          styles.clearRouteButton,
+                          { backgroundColor: colors.surface },
+                        ]}
                         onPress={() => setWalkingRoute(null)}
                       >
-                        <Ionicons name="close-circle-outline" size={18} color="#64748B" />
-                        <Text style={styles.clearRouteText}>Clear route</Text>
+                        <Ionicons
+                          name="close-circle-outline"
+                          size={18}
+                          color={colors.secondaryText}
+                        />
+                        <Text
+                          style={[
+                            styles.clearRouteText,
+                            { color: colors.secondaryText },
+                          ]}
+                        >
+                          Clear route
+                        </Text>
                       </Pressable>
                     )}
                   </View>
                 )}
 
                 {isNavigating && offRoute && (
-                  <Text style={styles.expandedHint}>
+                  <Text
+                    style={[
+                      styles.expandedHint,
+                      { color: colors.secondaryText },
+                    ]}
+                  >
                     Keep the app open while walking so GPS guidance can continue.
                   </Text>
                 )}
@@ -1682,12 +1829,30 @@ function stopNavigation() {
           </Animated.View>
         )}
 
-        {/* NAVIGATION FOCUS MODE */}
-        {focusMode && isNavigating && walkingRoute && selected && (
+        {!selected && !focusMode && (
           <View
-            style={styles.focusModeContainer}
-            pointerEvents="box-none"
+            style={[
+              styles.placeCard,
+              styles.emptyPlaceCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
           >
+            <View
+              style={[styles.handle, { backgroundColor: colors.border }]}
+            />
+            <Text
+              style={[
+                styles.emptyPlaceCardText,
+                { color: colors.secondaryText },
+              ]}
+            >
+              Choose a place on the map
+            </Text>
+          </View>
+        )}
+
+        {focusMode && isNavigating && walkingRoute && selected && (
+          <View style={styles.focusModeContainer} pointerEvents="box-none">
             <View style={styles.focusTopRow}>
               <View
                 style={[
@@ -1698,7 +1863,12 @@ function stopNavigation() {
                 <View style={styles.focusLiveDot} />
                 <View>
                   <Text style={styles.focusLiveText}>NAVIGATION ACTIVE</Text>
-                  <Text style={[styles.focusLiveCaption, { color: colors.secondaryText }]}>
+                  <Text
+                    style={[
+                      styles.focusLiveCaption,
+                      { color: colors.secondaryText },
+                    ]}
+                  >
                     GPS guidance is on
                   </Text>
                 </View>
@@ -1727,10 +1897,17 @@ function stopNavigation() {
               ]}
             >
               <View style={styles.focusInstructionHeader}>
-                <Text style={[styles.focusEyebrow, { color: colors.secondaryText }]}>
+                <Text
+                  style={[styles.focusEyebrow, { color: colors.secondaryText }]}
+                >
                   NEXT DIRECTION
                 </Text>
-                <Text style={[styles.focusStepCount, { color: colors.secondaryText }]}>
+                <Text
+                  style={[
+                    styles.focusStepCount,
+                    { color: colors.secondaryText },
+                  ]}
+                >
                   {walkingRoute.steps.length > 0
                     ? `STEP ${Math.min(activeStepIndex + 1, walkingRoute.steps.length)} OF ${walkingRoute.steps.length}`
                     : 'ROUTE GUIDANCE'}
@@ -1741,7 +1918,6 @@ function stopNavigation() {
                 <View style={styles.focusDirectionIcon}>
                   <Ionicons name="walk" size={21} color={BLUE} />
                 </View>
-
                 <Text style={[styles.focusInstruction, { color: colors.text }]}>
                   {walkingRoute.steps[activeStepIndex]?.instruction ??
                     'Continue following the blue route.'}
@@ -1771,7 +1947,12 @@ function stopNavigation() {
                   <Ionicons name="location" size={19} color={BLUE} />
                 </View>
                 <View style={styles.focusDestinationCopy}>
-                  <Text style={[styles.focusDestinationLabel, { color: colors.secondaryText }]}>
+                  <Text
+                    style={[
+                      styles.focusDestinationLabel,
+                      { color: colors.secondaryText },
+                    ]}
+                  >
                     DESTINATION
                   </Text>
                   <Text
@@ -1783,23 +1964,41 @@ function stopNavigation() {
                 </View>
               </View>
 
-              <View style={styles.focusMetrics}>
+              <View
+                style={[
+                  styles.focusMetrics,
+                  { borderColor: colors.border },
+                ]}
+              >
                 <View style={styles.focusMetric}>
                   <Text style={[styles.focusMetricValue, { color: BLUE }]}>
                     {formatDistance(remainingDistance)}
                   </Text>
-                  <Text style={[styles.focusMetricLabel, { color: colors.secondaryText }]}>
+                  <Text
+                    style={[
+                      styles.focusMetricLabel,
+                      { color: colors.secondaryText },
+                    ]}
+                  >
                     DISTANCE LEFT
                   </Text>
                 </View>
-
-                <View style={[styles.focusMetricDivider, { backgroundColor: colors.border }]} />
-
+                <View
+                  style={[
+                    styles.focusMetricDivider,
+                    { backgroundColor: colors.border },
+                  ]}
+                />
                 <View style={styles.focusMetric}>
                   <Text style={[styles.focusMetricValue, { color: BLUE }]}>
                     {Math.ceil(walkingRoute.duration / 60)} min
                   </Text>
-                  <Text style={[styles.focusMetricLabel, { color: colors.secondaryText }]}>
+                  <Text
+                    style={[
+                      styles.focusMetricLabel,
+                      { color: colors.secondaryText },
+                    ]}
+                  >
                     ESTIMATED TIME
                   </Text>
                 </View>
@@ -1807,15 +2006,12 @@ function stopNavigation() {
 
               <Pressable
                 style={styles.focusEndButton}
-                onPress={() => {
-                  stopNavigation();
-                  setFocusMode(false);
-                }}
+                onPress={stopNavigation}
+                accessibilityRole="button"
+                accessibilityLabel="End navigation"
               >
                 <Ionicons name="stop-circle" size={20} color="#FFFFFF" />
-                <Text style={styles.focusEndButtonText}>
-                  End Navigation
-                </Text>
+                <Text style={styles.focusEndButtonText}>End Navigation</Text>
               </Pressable>
             </View>
           </View>
@@ -1882,7 +2078,12 @@ function stopNavigation() {
                       },
                     ]}
                   >
-                    <Text style={styles.drawerAvatarText}>
+                    <Text
+                      style={[
+                        styles.drawerAvatarText,
+                        { color: colors.text },
+                      ]}
+                    >
                       {(currentProfile?.name || 'Guest')
                         .trim()
                         .split(/\s+/)
@@ -1975,45 +2176,7 @@ function stopNavigation() {
                 }}
               />
 
-              <View
-                style={[styles.divider, { backgroundColor: colors.border }]}
-              />
-
-              <DrawerItem
-                icon="log-out-outline"
-                label="Sign Out"
-                onPress={() => {
-                  setDrawerOpen(false);
-
-                  Alert.alert(
-                    'Sign out?',
-                    'Your local profile will remain saved on this device.',
-                    [
-                      {
-                        text: 'Cancel',
-                        style: 'cancel',
-                      },
-                      {
-                        text: 'Sign Out',
-                        style: 'destructive',
-                        onPress: async () => {
-                          try {
-                            await signOutLocalProfile();
-                            router.replace('/');
-                          } catch {
-                            Alert.alert(
-                              'Could not sign out',
-                              'Please try again.'
-                            );
-                          }
-                        },
-                      },
-                    ]
-                  );
-                }}
-              />
-
-              <Text style={styles.version}>
+              <Text style={[styles.version, { color: colors.secondaryText }]}>
                 Version 1.0 · Student project
               </Text>
             </View>
@@ -2234,6 +2397,16 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     zIndex: 9,
     overflow: 'hidden',
+  },
+  emptyPlaceCard: {
+    height: 82,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  emptyPlaceCardText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   locationInfo: {
     width: '100%',
@@ -2613,11 +2786,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#435267',
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#EDF0F4',
-    marginVertical: 10,
-  },
   version: {
     position: 'absolute',
     bottom: 22,
@@ -2739,6 +2907,21 @@ routeLabel: {
     fontSize: 13,
     fontWeight: '800',
   },
+  expandDirectionsButton: {
+    flex: 1,
+    height: 43,
+    backgroundColor: '#16834A',
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 7,
+  },
+  expandDirectionsButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
   focusModeButton: {
     flex: 1,
     height: 43,
@@ -2751,7 +2934,7 @@ routeLabel: {
   },
   focusModeButtonText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
   },
   focusModeContainer: {
@@ -2773,7 +2956,6 @@ routeLabel: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FFFFFF',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 16,
@@ -2797,7 +2979,6 @@ routeLabel: {
     letterSpacing: 0.5,
   },
   focusLiveCaption: {
-    color: '#718096',
     fontSize: 10,
     marginTop: 2,
   },
@@ -2805,7 +2986,6 @@ routeLabel: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#FFFFFF',
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 15,
@@ -2813,12 +2993,10 @@ routeLabel: {
     elevation: 5,
   },
   exitFocusText: {
-    color: '#263746',
     fontSize: 12,
     fontWeight: '800',
   },
   focusInstructionCard: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 18,
     borderWidth: 1,
     padding: 13,
@@ -2836,7 +3014,6 @@ routeLabel: {
     marginBottom: 8,
   },
   focusEyebrow: {
-    color: '#718096',
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 1.5,
@@ -2861,7 +3038,6 @@ routeLabel: {
   },
   focusInstruction: {
     flex: 1,
-    color: '#172B4D',
     fontSize: 15,
     lineHeight: 21,
     fontWeight: '800',
@@ -2882,7 +3058,6 @@ routeLabel: {
     fontWeight: '700',
   },
   focusBottomCard: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 24,
     borderWidth: 1,
     padding: 19,
@@ -2911,13 +3086,11 @@ routeLabel: {
     minWidth: 0,
   },
   focusDestinationLabel: {
-    color: '#718096',
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 1.5,
   },
   focusDestination: {
-    color: '#172B4D',
     fontSize: 17,
     fontWeight: '900',
     marginTop: 3,
@@ -2930,7 +3103,6 @@ routeLabel: {
     paddingVertical: 14,
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
   },
   focusMetric: {
     flex: 1,
@@ -2938,12 +3110,10 @@ routeLabel: {
     justifyContent: 'center',
   },
   focusMetricValue: {
-    color: BLUE,
     fontSize: 20,
     fontWeight: '900',
   },
   focusMetricLabel: {
-    color: '#718096',
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.6,
@@ -2953,16 +3123,15 @@ routeLabel: {
   focusMetricDivider: {
     alignSelf: 'stretch',
     width: 1,
-    backgroundColor: '#E2E8F0',
   },
   focusEndButton: {
-    height: 52,
-    borderRadius: 16,
+    height: 48,
     backgroundColor: '#D93025',
+    borderRadius: 13,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 9,
+    gap: 8,
   },
   focusEndButtonText: {
     color: '#FFFFFF',

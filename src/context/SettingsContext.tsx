@@ -8,14 +8,33 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Alert } from 'react-native';
+import { Alert, useColorScheme } from 'react-native';
 
-export type AppTheme = 'light' | 'dark';
+export type AppTheme = 'light' | 'dark' | 'system';
 export type AppLanguage = 'en' | 'fil';
+export type MapType = 'standard' | 'satellite';
+
+export type MapPreferences = {
+  mapType: MapType;
+  showMarkers: boolean;
+  showCurrentLocation: boolean;
+  defaultZoom: number;
+  navigationMode: 'walking';
+};
+
+export type NotificationPreferences = {
+  campusAnnouncements: boolean;
+  facilityUpdates: boolean;
+  eventNotifications: boolean;
+  maintenanceAnnouncements: boolean;
+  appUpdates: boolean;
+};
 
 type Settings = {
   theme: AppTheme;
   language: AppLanguage;
+  mapPreferences: MapPreferences;
+  notifications: NotificationPreferences;
 };
 
 type TranslationKey =
@@ -25,6 +44,7 @@ type TranslationKey =
   | 'theme'
   | 'light'
   | 'dark'
+  | 'system'
   | 'language'
   | 'english'
   | 'filipino'
@@ -44,13 +64,35 @@ type SettingsColors = {
 type SettingsContextValue = Settings & {
   colors: SettingsColors;
   isReady: boolean;
+  resolvedTheme: 'light' | 'dark';
   t: (key: TranslationKey) => string;
   setTheme: (theme: AppTheme) => Promise<void>;
   setLanguage: (language: AppLanguage) => Promise<void>;
+  updateMapPreferences: (preferences: Partial<MapPreferences>) => Promise<void>;
+  updateNotifications: (
+    notifications: Partial<NotificationPreferences>
+  ) => Promise<void>;
 };
 
 const STORAGE_KEY = 'ustp_app_settings';
-const DEFAULT_SETTINGS: Settings = { theme: 'light', language: 'en' };
+const DEFAULT_SETTINGS: Settings = {
+  theme: 'system',
+  language: 'en',
+  mapPreferences: {
+    mapType: 'standard',
+    showMarkers: true,
+    showCurrentLocation: true,
+    defaultZoom: 17,
+    navigationMode: 'walking',
+  },
+  notifications: {
+    campusAnnouncements: true,
+    facilityUpdates: true,
+    eventNotifications: true,
+    maintenanceAnnouncements: true,
+    appUpdates: false,
+  },
+};
 
 const translations: Record<AppLanguage, Record<TranslationKey, string>> = {
   en: {
@@ -60,6 +102,7 @@ const translations: Record<AppLanguage, Record<TranslationKey, string>> = {
     theme: 'Theme',
     light: 'Light',
     dark: 'Dark',
+    system: 'System',
     language: 'Language',
     english: 'English',
     filipino: 'Filipino',
@@ -72,6 +115,7 @@ const translations: Record<AppLanguage, Record<TranslationKey, string>> = {
     theme: 'Tema',
     light: 'Maliwanag',
     dark: 'Madilim',
+    system: 'Sistema',
     language: 'Wika',
     english: 'Ingles',
     filipino: 'Filipino',
@@ -79,13 +123,76 @@ const translations: Record<AppLanguage, Record<TranslationKey, string>> = {
   },
 };
 
-function isSettings(value: unknown): value is Settings {
-  if (typeof value !== 'object' || value === null) return false;
-  const settings = value as Record<string, unknown>;
-  return (
-    (settings.theme === 'light' || settings.theme === 'dark') &&
-    (settings.language === 'en' || settings.language === 'fil')
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readSettings(value: unknown): Settings {
+  if (!isRecord(value)) {
+    throw new Error('Stored settings have an invalid format.');
+  }
+
+  const theme = value.theme;
+  const language = value.language;
+
+  if (
+    (theme !== 'light' && theme !== 'dark' && theme !== 'system') ||
+    (language !== 'en' && language !== 'fil')
+  ) {
+    throw new Error('Stored settings have an invalid format.');
+  }
+
+  const storedMap = isRecord(value.mapPreferences)
+    ? value.mapPreferences
+    : {};
+  const storedNotifications = isRecord(value.notifications)
+    ? value.notifications
+    : {};
+  const defaultZoom = storedMap.defaultZoom;
+
+  return {
+    theme,
+    language,
+    mapPreferences: {
+      mapType:
+        storedMap.mapType === 'satellite' ? 'satellite' : 'standard',
+      showMarkers:
+        typeof storedMap.showMarkers === 'boolean'
+          ? storedMap.showMarkers
+          : DEFAULT_SETTINGS.mapPreferences.showMarkers,
+      showCurrentLocation:
+        typeof storedMap.showCurrentLocation === 'boolean'
+          ? storedMap.showCurrentLocation
+          : DEFAULT_SETTINGS.mapPreferences.showCurrentLocation,
+      defaultZoom:
+        typeof defaultZoom === 'number' && defaultZoom >= 13 && defaultZoom <= 20
+          ? defaultZoom
+          : DEFAULT_SETTINGS.mapPreferences.defaultZoom,
+      navigationMode: 'walking',
+    },
+    notifications: {
+      campusAnnouncements:
+        typeof storedNotifications.campusAnnouncements === 'boolean'
+          ? storedNotifications.campusAnnouncements
+          : DEFAULT_SETTINGS.notifications.campusAnnouncements,
+      facilityUpdates:
+        typeof storedNotifications.facilityUpdates === 'boolean'
+          ? storedNotifications.facilityUpdates
+          : DEFAULT_SETTINGS.notifications.facilityUpdates,
+      eventNotifications:
+        typeof storedNotifications.eventNotifications === 'boolean'
+          ? storedNotifications.eventNotifications
+          : DEFAULT_SETTINGS.notifications.eventNotifications,
+      maintenanceAnnouncements:
+        typeof storedNotifications.maintenanceAnnouncements === 'boolean'
+          ? storedNotifications.maintenanceAnnouncements
+          : DEFAULT_SETTINGS.notifications.maintenanceAnnouncements,
+      appUpdates:
+        typeof storedNotifications.appUpdates === 'boolean'
+          ? storedNotifications.appUpdates
+          : DEFAULT_SETTINGS.notifications.appUpdates,
+    },
+  };
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -94,6 +201,7 @@ export function SettingsProvider({ children }: React.PropsWithChildren) {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [isReady, setIsReady] = useState(false);
   const settingsRef = useRef(settings);
+  const systemColorScheme = useColorScheme();
 
   useEffect(() => {
     let active = true;
@@ -102,10 +210,7 @@ export function SettingsProvider({ children }: React.PropsWithChildren) {
       try {
         const stored = await AsyncStorage.getItem(STORAGE_KEY);
         if (stored) {
-          const parsed: unknown = JSON.parse(stored);
-          if (!isSettings(parsed)) {
-            throw new Error('Stored settings have an invalid format.');
-          }
+          const parsed = readSettings(JSON.parse(stored) as unknown);
           if (active) {
             settingsRef.current = parsed;
             setSettings(parsed);
@@ -143,10 +248,39 @@ export function SettingsProvider({ children }: React.PropsWithChildren) {
       saveSettings({ ...settingsRef.current, language }),
     [saveSettings]
   );
+  const updateMapPreferences = useCallback(
+    (preferences: Partial<MapPreferences>) =>
+      saveSettings({
+        ...settingsRef.current,
+        mapPreferences: {
+          ...settingsRef.current.mapPreferences,
+          ...preferences,
+        },
+      }),
+    [saveSettings]
+  );
+  const updateNotifications = useCallback(
+    (notifications: Partial<NotificationPreferences>) =>
+      saveSettings({
+        ...settingsRef.current,
+        notifications: {
+          ...settingsRef.current.notifications,
+          ...notifications,
+        },
+      }),
+    [saveSettings]
+  );
+
+  const resolvedTheme =
+    settings.theme === 'system'
+      ? systemColorScheme === 'dark'
+        ? 'dark'
+        : 'light'
+      : settings.theme;
 
   const colors = useMemo<SettingsColors>(
     () =>
-      settings.theme === 'dark'
+      resolvedTheme === 'dark'
         ? {
             background: '#101827',
             card: '#1E293B',
@@ -167,7 +301,7 @@ export function SettingsProvider({ children }: React.PropsWithChildren) {
             border: '#DCE7F5',
             selected: '#EAF2FF',
           },
-    [settings.theme]
+    [resolvedTheme]
   );
 
   const t = useCallback(
@@ -180,11 +314,24 @@ export function SettingsProvider({ children }: React.PropsWithChildren) {
       ...settings,
       colors,
       isReady,
+      resolvedTheme,
       t,
       setTheme,
       setLanguage,
+      updateMapPreferences,
+      updateNotifications,
     }),
-    [settings, colors, isReady, t, setTheme, setLanguage]
+    [
+      settings,
+      colors,
+      isReady,
+      resolvedTheme,
+      t,
+      setTheme,
+      setLanguage,
+      updateMapPreferences,
+      updateNotifications,
+    ]
   );
 
   return (
