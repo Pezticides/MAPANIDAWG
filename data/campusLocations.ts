@@ -23,30 +23,13 @@ export const campusLocations: CampusLocation[] = [
   // ACADEMIC CORE & ADMINISTRATION
 
   {
-    id: 'building-1',
-    name: 'Bldg. 1 - Arts and Culture Building',
-    category: 'Academic',
-    description: 'Arts and Culture Building, USTP CDO.',
-    latitude: 8.48565,
-    longitude: 124.65605,
-    isApproximate: true,
-  },
-  {
-    id: 'building-2',
-    name: 'Bldg. 2 - Guidance and Testing Center',
-    category: 'Office',
-    description: 'Guidance and Testing Center, USTP CDO.',
-    latitude: 8.48600,
-    longitude: 124.65800,
-    isApproximate: true,
-  },
-  {
     id: 'building-3',
     name: 'Bldg. 3 - College of Medicine',
     category: 'Academic',
     description: 'College of Medicine, USTP CDO. Approximate public map location.',
     latitude: 8.48609,
     longitude: 124.65826,
+    image: require('../assets/images/BUILDING 3.jpg'),
     isApproximate: true,
   },
   {
@@ -56,6 +39,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Administration Building, USTP CDO.',
     latitude: 8.485992094859405,
     longitude: 124.6572460611573,
+    image: require('../assets/images/BUILDING 10.jpg'),
     isApproximate: false,
   },
   {
@@ -65,6 +49,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Finance and Accounting / Senior High School Building, across the ICT Building.',
     latitude: 8.486240147154303,
     longitude: 124.65682416439887,
+    image: require('../assets/images/BUILDING 14.jpg'),
     isApproximate: false,
   },
   {
@@ -74,6 +59,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Science Complex, USTP CDO.',
     latitude: 8.48645,
     longitude: 124.65545,
+    image: require('../assets/images/BUILDING 41.jpg'),
     isApproximate: true,
   },
   {
@@ -83,6 +69,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Technology Building, USTP CDO.',
     latitude: 8.486913583535681,
     longitude: 124.65519799332067,
+    image: require('../assets/images/BUILDING47.jpg'),
     isApproximate: false,
   },
 
@@ -123,27 +110,9 @@ export const campusLocations: CampusLocation[] = [
     description: 'Engineering Complex II, Left Wing, USTP CDO.',
     latitude: 8.484949621789301,
     longitude: 124.6570891212296,
+    image: require('../assets/images/BUILDING43.jpg'),
     isApproximate: true,
   },
-  {
-    id: 'building-45',
-    name: 'Bldg. 45 - Mechanical Laboratory Shop',
-    category: 'Facility',
-    description: 'Mechanical Laboratory Shop, USTP CDO.',
-    latitude: 8.486528605923393,
-    longitude: 124.65493163110636,
-    isApproximate: true,
-  },
-  {
-    id: 'building-52',
-    name: 'Bldg. 52 - Fab Lab Building',
-    category: 'Facility',
-    description: 'Fabrication Laboratory Building, USTP CDO.',
-    latitude: 8.48580,
-    longitude: 124.65785,
-    isApproximate: true,
-  },
-
   // STUDENT SERVICES & GENERAL FACILITIES
 
   {
@@ -153,6 +122,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Gymnasium Lobby, USTP CDO.',
     latitude: 8.486134644424983,
     longitude: 124.65644688845259,
+    image: require('../assets/images/GYMNASIUN.png'),
     isApproximate: false,
   },
   {
@@ -162,6 +132,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Gymnasium and DRER Memorial Hall, USTP CDO.',
     latitude: 8.485842,
     longitude: 124.656440,
+    image: require('../assets/images/BUILDING16.jpg'),
     isApproximate: true,
   },
   {
@@ -171,6 +142,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'USTP CDO Cafeteria.',
     latitude: 8.485204,
     longitude: 124.6567697,
+    image: require('../assets/images/BUILDING20.jpg'),
     isApproximate: true,
   },
   {
@@ -180,6 +152,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Guard House, USTP CDO.',
     latitude: 8.48505,
     longitude: 124.65650,
+    image: require('../assets/images/BUILDING21.png'),
     isApproximate: true,
   },
   {
@@ -203,30 +176,13 @@ export const campusLocations: CampusLocation[] = [
     isApproximate: true,
   },
   {
-    id: 'building-44',
-    name: 'Bldg. 44 - Student Center & Education Complex',
-    category: 'Facility',
-    description: 'Student Center and Education Complex, USTP CDO.',
-    latitude: 8.48570,
-    longitude: 124.65620,
-    isApproximate: true,
-  },
-  {
-    id: 'building-50',
-    name: 'Bldg. 50 - Faculty Learning Resource Center',
-    category: 'Academic',
-    description: 'Faculty Learning Resource Center, USTP CDO.',
-    latitude: 8.48670,
-    longitude: 124.65560,
-    isApproximate: true,
-  },
-  {
     id: 'building-51',
     name: 'Bldg. 51 - Dormitory',
     category: 'Facility',
     description: 'Student Dormitory, USTP CDO.',
     latitude: 8.487129103574485,
     longitude: 124.65617156592654,
+    image: require('../assets/images/BUILDING 51.jpg'),
     isApproximate: false,
   },
 
@@ -239,6 +195,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Culinary Building, USTP CDO.',
     latitude: 8.48536936414219,
     longitude: 124.65721387228605,
+    image: require('../assets/images/BUILDING18.jpg'),
     isApproximate: false,
   },
   {
@@ -248,6 +205,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'National Service Training Program Building, USTP CDO.',
     latitude: 8.485077550709118,
     longitude: 124.65715821644972,
+    image: require('../assets/images/BUILDING 19 NSTP.jpg'),
     isApproximate: false,
   },
   {
@@ -257,6 +215,7 @@ export const campusLocations: CampusLocation[] = [
     description: "Girl's Trade Building, USTP CDO.",
     latitude: 8.48590,
     longitude: 124.65580,
+    image: require('../assets/images/BUILDING24.jpg'),
     isApproximate: true,
   },
   {
@@ -266,6 +225,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Food Innovation Center, USTP CDO.',
     latitude: 8.486312292473889,
     longitude: 124.65588785374032,
+    image: require('../assets/images/BUILDING25.jpg'),
     isApproximate: false,
   },
   {
@@ -275,6 +235,7 @@ export const campusLocations: CampusLocation[] = [
     description: 'Food Innovation Center, USTP CDO.',
     latitude: 8.486410788272485,
     longitude: 124.65613028807715,
+    image: require('../assets/images/BUILDING26.jpg'),
     isApproximate: false,
   },
   {
@@ -284,24 +245,17 @@ export const campusLocations: CampusLocation[] = [
     description: 'Old Science Building, USTP CDO.',
     latitude: 8.48598276912622,
     longitude: 124.65596274972758,
+    image: require('../assets/images/BUILDING 28.png'),
     isApproximate: false,
   },
   {
-    id: 'building-35',
-    name: 'Bldg. 35 - Old Education Building',
+    id: 'movable-classroom',
+    name: 'Movable Classroom',
     category: 'Academic',
-    description: 'Old Education Building, USTP CDO.',
-    latitude: 8.48560,
-    longitude: 124.65590,
-    isApproximate: true,
-  },
-  {
-    id: 'building-36',
-    name: 'Bldg. 36 - Old Student Center',
-    category: 'Facility',
-    description: 'Old Student Center, USTP CDO.',
-    latitude: 8.48550,
-    longitude: 124.65615,
-    isApproximate: true,
+    description: 'Movable Classroom, USTP CDO.',
+    latitude: 8.486640705329465,
+    longitude: 124.65685941127226,
+    image: require('../assets/images/MOVABLE CLASSROOM.jpg'),
+    isApproximate: false,
   },
 ];
