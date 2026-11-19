@@ -1,4 +1,5 @@
 
+import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 
 // Keep this interface compatible with your existing map/profile screens.
@@ -45,6 +46,43 @@ export async function getCurrentProfile(): Promise<LocalProfile | null> {
     email: user.email || '',
     createdAt: profile?.created_at || user.created_at,
   };
+}
+
+export async function ensureProfileExists(user: User): Promise<void> {
+  const { data: existingProfile, error: lookupError } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (lookupError) throw lookupError;
+  if (existingProfile) return;
+
+  const metadataName = user.user_metadata?.full_name;
+  const fullName =
+    typeof metadataName === 'string' && metadataName.trim()
+      ? metadataName.trim()
+      : user.email?.split('@')[0] || 'USTP User';
+
+  const { error: insertError } = await supabase
+    .from('profiles')
+    .insert({ id: user.id, full_name: fullName });
+
+  if (!insertError) return;
+
+  if (insertError.code === '23505') {
+    const { data: duplicateProfile, error: duplicateLookupError } =
+      await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle();
+
+    if (duplicateLookupError) throw duplicateLookupError;
+    if (duplicateProfile) return;
+  }
+
+  throw insertError;
 }
 
 // Update the authenticated user's name.

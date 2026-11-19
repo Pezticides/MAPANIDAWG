@@ -26,6 +26,7 @@ import {
 } from '../context/SettingsContext';
 import { signOutLocalProfile } from '../lib/localProfile';
 import { supabase } from '../lib/supabase';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 
 type AccountForm = 'password' | 'email' | null;
 type NotificationKey = keyof NotificationPreferences;
@@ -84,6 +85,9 @@ export default function SettingsScreen() {
   const [formValue, setFormValue] = useState('');
   const [confirmValue, setConfirmValue] = useState('');
   const [locationPermission, setLocationPermission] = useState('Checking…');
+  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -294,11 +298,78 @@ export default function SettingsScreen() {
     );
   }
 
-  function showAccountDeletionNotice() {
-    Alert.alert(
-      'Account deletion unavailable',
-      'Deleting a Supabase account requires a trusted server-side admin endpoint, which is not configured in this app. Contact a campus administrator to request account deletion.'
-    );
+  async function deleteAccountPermanently() {
+    setDeletingAccount(true);
+    let accountDeleted = false;
+
+    try {
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!sessionData.session) {
+        throw new Error('Sign in before deleting your account.');
+      }
+
+      const { data, error } = await supabase.functions.invoke<{
+        deleted: boolean;
+      }>('delete-account', { method: 'POST' });
+      if (error) {
+        if (error instanceof FunctionsHttpError) {
+          const response = error.context as Response;
+          const body: unknown = await response.json().catch(() => null);
+          if (
+            body &&
+            typeof body === 'object' &&
+            'error' in body &&
+            typeof body.error === 'string'
+          ) {
+            throw new Error(body.error);
+          }
+          if (response.status === 404) {
+            throw new Error(
+              'The secure account-deletion function is not deployed. Contact the app administrator.'
+            );
+          }
+        }
+        throw error;
+      }
+      if (!data?.deleted) {
+        throw new Error('The server did not confirm account deletion.');
+      }
+      accountDeleted = true;
+
+      const { error: signOutError } = await supabase.auth.signOut({
+        scope: 'local',
+      });
+      if (signOutError) {
+        throw new Error(
+          'Your account was deleted, but this device could not clear its saved session. Restart the app and sign in again.'
+        );
+      }
+
+      setDeleteDialogVisible(false);
+      setDeleteConfirmation('');
+      router.replace('/');
+    } catch (error) {
+      if (accountDeleted) {
+        setDeleteDialogVisible(false);
+        Alert.alert(
+          'Account deleted',
+          error instanceof Error
+            ? error.message
+            : 'Your account was deleted. Restart the app to clear this device session.'
+        );
+        router.replace('/');
+        return;
+      }
+
+      Alert.alert(
+        'Could not delete account',
+        error instanceof Error ? error.message : 'Please try again.'
+      );
+    } finally {
+      setDeletingAccount(false);
+    }
   }
 
   function showFaq() {
@@ -468,10 +539,13 @@ export default function SettingsScreen() {
             <SettingRow
               icon="trash-outline"
               title="Delete account"
-              detail="Request account and data deletion"
+              detail="Permanently remove your account and saved places"
               colors={colors}
               destructive
-              onPress={showAccountDeletionNotice}
+              onPress={() => {
+                setDeleteConfirmation('');
+                setDeleteDialogVisible(true);
+              }}
             />
           </Section>
 
@@ -814,6 +888,76 @@ export default function SettingsScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={deleteDialogVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!deletingAccount) setDeleteDialogVisible(false);
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              Delete your account permanently?
+            </Text>
+            <Text style={[styles.modalDescription, { color: colors.secondaryText }]}>
+              This permanently deletes your Supabase account, profile, and saved
+              places. This cannot be undone. Type DELETE to confirm.
+            </Text>
+            <TextInput
+              style={[
+                styles.modalInput,
+                {
+                  color: colors.text,
+                  backgroundColor: colors.background,
+                  borderColor: colors.border,
+                },
+              ]}
+              value={deleteConfirmation}
+              onChangeText={setDeleteConfirmation}
+              placeholder="Type DELETE"
+              placeholderTextColor={colors.secondaryText}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              editable={!deletingAccount}
+              accessibilityLabel="Type DELETE to confirm account deletion"
+            />
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalButton, { backgroundColor: colors.surface }]}
+                onPress={() => setDeleteDialogVisible(false)}
+                disabled={deletingAccount}
+              >
+                <Text style={[styles.modalCancelText, { color: colors.text }]}>
+                  Cancel
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.modalButton,
+                  styles.modalDelete,
+                  (deleteConfirmation.trim().toUpperCase() !== 'DELETE' ||
+                    deletingAccount) &&
+                    styles.modalDeleteDisabled,
+                ]}
+                onPress={() => void deleteAccountPermanently()}
+                disabled={
+                  deleteConfirmation.trim().toUpperCase() !== 'DELETE' ||
+                  deletingAccount
+                }
+              >
+                {deletingAccount ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalPrimaryText}>Delete account</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1139,6 +1283,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   modalPrimary: { backgroundColor: '#1A73E8' },
+  modalDelete: { backgroundColor: '#C2413A' },
+  modalDeleteDisabled: { opacity: 0.55 },
   modalCancelText: { fontSize: 13, fontWeight: '800' },
   modalPrimaryText: { color: '#FFFFFF', fontSize: 13, fontWeight: '900' },
 });

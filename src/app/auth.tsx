@@ -11,17 +11,23 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 // Supabase client
 import { supabase } from '../lib/supabase';
+import { AUTH_CALLBACK_URL, isEmailVerified } from '../lib/authUtils';
 
 export default function AuthScreen() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const params = useLocalSearchParams<{ mode?: string; email?: string }>();
+  const [mode, setMode] = useState<'signin' | 'signup'>(
+    params.mode === 'signup' ? 'signup' : 'signin'
+  );
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(
+    typeof params.email === 'string' ? params.email : ''
+  );
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -71,8 +77,7 @@ export default function AuthScreen() {
           email: cleanEmail,
           password,
           options: {
-            // The database signup trigger uses this metadata
-            // to populate the user's profile.
+            emailRedirectTo: AUTH_CALLBACK_URL,
             data: {
               full_name: cleanName,
             },
@@ -81,23 +86,24 @@ export default function AuthScreen() {
 
         if (error) throw error;
 
-        // With email confirmation enabled, Supabase normally
-        // returns no active session until the user verifies.
-        if (!data.session) {
-          Alert.alert(
-            'Verify your email',
-            'Your account has been created. Check your inbox for the verification email, then return here and sign in.'
-          );
-
-          setMode('signin');
-          setPassword('');
+        if (data.user?.identities?.length === 0) {
+          showDuplicateAccountOptions(cleanEmail);
           return;
         }
 
-        // If email confirmation is disabled, a session may
-        // be returned immediately.
-        Alert.alert('Account created', 'You are now signed in.');
-        router.replace('/explore');
+        if (!data.user) {
+          throw new Error('Supabase did not return the new account.');
+        }
+
+        if (data.session && isEmailVerified(data.user)) {
+          router.replace('/explore');
+          return;
+        }
+
+        router.replace({
+          pathname: '/auth/confirmation',
+          params: { email: cleanEmail },
+        });
       } else {
         // Authenticate using the actual email and password.
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -111,16 +117,67 @@ export default function AuthScreen() {
           throw new Error('No active session was created. Please try again.');
         }
 
+        if (!isEmailVerified(data.user)) {
+          router.replace({
+            pathname: '/auth/confirmation',
+            params: { email: cleanEmail },
+          });
+          return;
+        }
+
         router.replace('/explore');
       }
     } catch (error) {
-      Alert.alert(
-        mode === 'signup' ? 'Registration failed' : 'Sign-in failed',
-        error instanceof Error ? error.message : 'Please try again.'
-      );
+      if (mode === 'signup' && isDuplicateEmailError(error)) {
+        showDuplicateAccountOptions(cleanEmail);
+      } else if (
+        mode === 'signup' &&
+        isConfirmationEmailDeliveryError(error)
+      ) {
+        Alert.alert(
+          'Confirmation email could not be sent',
+          getRegistrationErrorMessage(error),
+          [
+            { text: 'Keep editing', style: 'cancel' },
+            {
+              text: 'Email options',
+              onPress: () =>
+                router.replace({
+                  pathname: '/auth/confirmation',
+                  params: { email: cleanEmail, deliveryError: 'true' },
+                }),
+            },
+          ]
+        );
+      } else if (mode === 'signin' && isEmailNotConfirmedError(error)) {
+        router.replace({
+          pathname: '/auth/confirmation',
+          params: { email: cleanEmail },
+        });
+      } else {
+        Alert.alert(
+          mode === 'signup' ? 'Registration failed' : 'Sign-in failed',
+          mode === 'signup'
+            ? getRegistrationErrorMessage(error)
+            : getAuthErrorMessage(error)
+        );
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  function isEmailNotConfirmedError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const code =
+      'code' in error && typeof error.code === 'string' ? error.code : '';
+    const message =
+      'message' in error && typeof error.message === 'string'
+        ? error.message
+        : '';
+    return (
+      code === 'email_not_confirmed' || /email not confirmed/i.test(message)
+    );
   }
 
   return (
@@ -268,6 +325,106 @@ export default function AuthScreen() {
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
+}
+
+function isDuplicateEmailError(error: unknown): boolean {
+  const { code, message } = getAuthErrorDetails(error);
+  return (
+    code === 'user_already_exists' ||
+    code === 'email_exists' ||
+    /already registered|already exists|email exists/i.test(message)
+  );
+}
+
+function isConfirmationEmailDeliveryError(error: unknown): boolean {
+  const { message } = getAuthErrorDetails(error);
+  return /error sending confirmation email|could not send.*confirmation email|failed to send.*confirmation email/i.test(
+    message
+  );
+}
+
+function showDuplicateAccountOptions(email: string): void {
+  Alert.alert(
+    'Email already registered',
+    'This email may already have an account. Sign in, or open email options if the account still needs confirmation.',
+    [
+      { text: 'Not now', style: 'cancel' },
+      {
+        text: 'Sign in',
+        onPress: () =>
+          router.replace({ pathname: '/auth', params: { mode: 'signin', email } }),
+      },
+      {
+        text: 'Email options',
+        onPress: () =>
+          router.replace({
+            pathname: '/auth/confirmation',
+            params: { email },
+          }),
+      },
+    ]
+  );
+}
+
+function getRegistrationErrorMessage(error: unknown): string {
+  const { code, message, status } = getAuthErrorDetails(error);
+
+  if (isConfirmationEmailDeliveryError(error)) {
+    return 'Supabase could not deliver the confirmation email. This is usually caused by missing or invalid SMTP settings, or an email-provider limit. Check Supabase Auth email/SMTP settings. The account may already have been created; after email delivery is fixed, use Email options to resend instead of registering repeatedly.';
+  }
+
+  if (
+    /redirect_to|redirect url|emailredirectto/i.test(message) &&
+    /not allowed|not permitted|not whitelisted|invalid/i.test(message)
+  ) {
+    return `Supabase rejected the confirmation callback. Add ${AUTH_CALLBACK_URL} to the allowed redirect URLs in your Supabase Auth URL Configuration, then try again.`;
+  }
+
+  if (isDuplicateEmailError(error)) {
+    return 'This email is already registered. Sign in or use a different email address.';
+  }
+
+  if (
+    /rate limit|too many requests|security purposes/i.test(message) ||
+    status === 429
+  ) {
+    return 'Too many registration attempts. Wait a little while, then try again.';
+  }
+
+  if (/network request failed|failed to fetch|network error/i.test(message)) {
+    return 'Could not reach the authentication service. Check your internet connection and try again.';
+  }
+
+  if (message) return message;
+  if (code) return `Registration could not be completed (${code}). Please try again.`;
+  return 'Registration could not be completed. Please check your connection and try again.';
+}
+
+function getAuthErrorMessage(error: unknown): string {
+  const { message, code } = getAuthErrorDetails(error);
+  return message || (code ? `Authentication failed (${code}).` : 'Please try again.');
+}
+
+function getAuthErrorDetails(error: unknown): {
+  code: string;
+  message: string;
+  status?: number;
+} {
+  if (!error || typeof error !== 'object') {
+    return { code: '', message: '' };
+  }
+
+  return {
+    code: 'code' in error && typeof error.code === 'string' ? error.code : '',
+    message:
+      'message' in error && typeof error.message === 'string'
+        ? error.message
+        : '',
+    status:
+      'status' in error && typeof error.status === 'number'
+        ? error.status
+        : undefined,
+  };
 }
 
 const styles = StyleSheet.create({
