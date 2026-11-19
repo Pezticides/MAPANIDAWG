@@ -152,18 +152,135 @@ function createMapHtml(preferences: MapPreferences) {
     .leaflet-container {
       font-family: Arial, sans-serif;
     }
-    .pin {
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      background: #1A73E8;
-      border: 3px solid white;
-      box-shadow: 0 2px 7px #0005;
+    .leaflet-div-icon.campus-marker-container,
+    .leaflet-div-icon.user-location-container {
+      background: transparent;
+      border: 0;
     }
-    .pin.selected {
-      background: #EA4335;
-      width: 22px;
-      height: 22px;
+    .campus-marker {
+      position: relative;
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      transform: scale(1);
+      transform-origin: center;
+      transition: transform 180ms ease;
+    }
+    .marker-icon {
+      box-sizing: border-box;
+      display: flex;
+      width: 34px;
+      height: 34px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16);
+      transition: outline 180ms ease, box-shadow 180ms ease;
+    }
+    .marker-icon svg {
+      display: block;
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .category-academic .category-icon {
+      background: #DBEAFE;
+      color: #2563EB;
+    }
+    .category-office .category-icon {
+      background: #FFEDD5;
+      color: #EA580C;
+    }
+    .category-food .category-icon {
+      background: #DCFCE7;
+      color: #16A34A;
+    }
+    .category-facility .category-icon {
+      background: #F3E8FF;
+      color: #9333EA;
+    }
+    .destination-icon {
+      display: none;
+      background: #2563EB;
+      color: #FFFFFF;
+    }
+    .campus-marker.selected:not(.destination) {
+      transform: scale(1.14);
+    }
+    .campus-marker.selected:not(.destination) .category-icon {
+      outline: 2px solid currentColor;
+      outline-offset: 2px;
+      box-shadow: 0 2px 7px rgba(15, 23, 42, 0.24);
+    }
+    .campus-marker.destination {
+      transform: scale(1.16);
+    }
+    .campus-marker.destination .category-icon {
+      display: none;
+    }
+    .campus-marker.destination .destination-icon {
+      display: flex;
+      outline: 2px solid #FFFFFF;
+      box-shadow: 0 0 0 3px #2563EB, 0 2px 7px rgba(15, 23, 42, 0.24);
+    }
+    .marker-label {
+      position: absolute;
+      z-index: 1;
+      bottom: calc(100% + 7px);
+      left: 50%;
+      display: none;
+      max-width: 190px;
+      padding: 5px 8px;
+      transform: translateX(-50%);
+      border: 1px solid rgba(15, 23, 42, 0.1);
+      border-radius: 8px;
+      background: #FFFFFF;
+      color: #172B4D;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.16);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 14px;
+      overflow: hidden;
+      pointer-events: none;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .campus-marker.selected .marker-label,
+    .campus-marker.destination .marker-label {
+      display: block;
+    }
+    .user-location {
+      position: relative;
+      width: 32px;
+      height: 32px;
+    }
+    .user-location-pulse {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: rgba(37, 99, 235, 0.22);
+      animation: user-location-pulse 1.8s ease-out infinite;
+    }
+    .user-location-dot {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 1;
+      width: 16px;
+      height: 16px;
+      border: 3px solid #FFFFFF;
+      border-radius: 50%;
+      background: #2563EB;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.3);
+    }
+    @keyframes user-location-pulse {
+      0% { transform: scale(0.65); opacity: 0.85; }
+      75%, 100% { transform: scale(1.5); opacity: 0; }
     }
   </style>
 </head>
@@ -186,7 +303,7 @@ function createMapHtml(preferences: MapPreferences) {
   L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
   let tileLayer;
-  let markers = [];
+  const markers = new Map();
   let userMarker = null;
   let walkingRouteLayer = null;
 
@@ -220,37 +337,128 @@ function createMapHtml(preferences: MapPreferences) {
     window.ReactNativeWebView.postMessage(JSON.stringify(data));
   }
 
-  function setCampusData(locations, selectedId) {
-    markers.forEach(marker => map.removeLayer(marker));
-    markers = [];
+  const categoryMarkerIcons = {
+    academic: {
+      className: 'academic',
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-5 9 5"/><path d="M4 10h16"/><path d="M6 10v8M10 10v8M14 10v8M18 10v8"/><path d="M4 20h16"/></svg>'
+    },
+    office: {
+      className: 'office',
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/><path d="M10 12v2h4v-2"/></svg>'
+    },
+    food: {
+      className: 'food',
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v7"/><path d="M4 3v3a3 3 0 0 0 6 0V3"/><path d="M7 9v12"/><path d="M17 3v18"/><path d="M17 3c-2.5 2-3 5-3 8h3"/></svg>'
+    },
+    facility: {
+      className: 'facility',
+      svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 21v-4h6v4"/><path d="M8 7h1M15 7h1M8 11h1M15 11h1"/></svg>'
+    }
+  };
+  const destinationMarkerSvg =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V5"/><path d="M5 5h14l-2 4 2 4H5"/></svg>';
+
+  function createCampusMarkerIcon(place) {
+    const category = String(place.category || '').toLowerCase();
+    const icon = categoryMarkerIcons[category] || categoryMarkerIcons.facility;
+
+    return L.divIcon({
+      className: 'campus-marker-container',
+      html: '<div class="campus-marker category-' + icon.className + '">' +
+        '<span class="marker-icon category-icon">' + icon.svg + '</span>' +
+        '<span class="marker-icon destination-icon">' + destinationMarkerSvg + '</span>' +
+        '<span class="marker-label"></span>' +
+        '</div>',
+      iconSize: [36, 36],
+      iconAnchor: [18, 18],
+      popupAnchor: [0, -20]
+    });
+  }
+
+  function createUserLocationIcon() {
+    return L.divIcon({
+      className: 'user-location-container',
+      html: '<div class="user-location">' +
+        '<span class="user-location-pulse"></span>' +
+        '<span class="user-location-dot"></span>' +
+        '</div>',
+      iconSize: [32, 32],
+      iconAnchor: [16, 16]
+    });
+  }
+
+  function updateCampusMarkerVisual(marker) {
+    const iconElement = marker.getElement();
+    const markerElement = iconElement &&
+      iconElement.querySelector('.campus-marker');
+
+    if (!markerElement) return;
+
+    markerElement.classList.toggle('selected', marker._campusSelected);
+    markerElement.classList.toggle('destination', marker._campusDestination);
+    markerElement.querySelector('.marker-label').textContent =
+      marker._campusPlace.name;
+    marker.setZIndexOffset(
+      marker._campusSelected || marker._campusDestination ? 1000 : 0
+    );
+  }
+
+  function setCampusData(locations, selectedId, destinationId) {
+    const visibleIds = new Set();
+    const selectedKey = selectedId == null ? null : String(selectedId);
+    const destinationKey = destinationId == null ? null : String(destinationId);
 
     locations.forEach(place => {
-      const isSelected = String(place.id) === String(selectedId);
+      const id = String(place.id);
+      visibleIds.add(id);
 
-      const marker = L.marker(
-        [place.latitude, place.longitude],
-        {
-          icon: L.divIcon({
-            className: '',
-            html: '<div class="pin ' +
-              (isSelected ? 'selected' : '') + '"></div>',
-            iconSize: isSelected ? [28, 28] : [24, 24],
-            iconAnchor: isSelected ? [14, 14] : [12, 12]
-          })
+      let marker = markers.get(id);
+      if (!marker) {
+        marker = L.marker(
+          [place.latitude, place.longitude],
+          { icon: createCampusMarkerIcon(place) }
+        );
+        marker.bindPopup(
+          '<b>' + escapeHtml(place.name) + '</b><br>' +
+          escapeHtml(place.category)
+        );
+        marker.on('click', () => {
+          sendMessage({ type: 'marker', id: id });
+        });
+        markers.set(id, marker);
+        marker._campusCategory = place.category;
+      } else {
+        marker.setLatLng([place.latitude, place.longitude]);
+        marker.setPopupContent(
+          '<b>' + escapeHtml(place.name) + '</b><br>' +
+          escapeHtml(place.category)
+        );
+
+        if (marker._campusCategory !== place.category) {
+          marker.setIcon(createCampusMarkerIcon(place));
+          marker._campusCategory = place.category;
         }
-      );
+      }
 
-      marker.bindPopup(
-        '<b>' + escapeHtml(place.name) + '</b><br>' +
-        escapeHtml(place.category)
-      );
+      marker._campusPlace = place;
+      marker._campusSelected = id === selectedKey;
+      marker._campusDestination = id === destinationKey;
 
-      marker.on('click', () => {
-        sendMessage({ type: 'marker', id: String(place.id) });
-      });
+      if (showCampusMarkers) {
+        marker.addTo(map);
+        updateCampusMarkerVisual(marker);
+      } else {
+        map.removeLayer(marker);
+      }
+    });
 
-      if (showCampusMarkers) marker.addTo(map);
-      markers.push(marker);
+    markers.forEach((marker, id) => {
+      if (visibleIds.has(id)) return;
+
+      marker.closePopup();
+      marker.off();
+      map.removeLayer(marker);
+      markers.delete(id);
     });
   }
 
@@ -263,6 +471,7 @@ function createMapHtml(preferences: MapPreferences) {
     markers.forEach(marker => {
       if (showCampusMarkers) {
         marker.addTo(map);
+        updateCampusMarkerVisual(marker);
       } else {
         map.removeLayer(marker);
       }
@@ -294,19 +503,7 @@ function createMapHtml(preferences: MapPreferences) {
   }
 
   function showUserLocation(lat, lng) {
-    if (userMarker) map.removeLayer(userMarker);
-
-    userMarker = L.circleMarker([lat, lng], {
-      radius: 8,
-      color: '#ffffff',
-      weight: 3,
-      fillColor: '#4285F4',
-      fillOpacity: 1
-    });
-
-    if (showCurrentLocation) userMarker.addTo(map);
-
-    userMarker.bindPopup('Your location');
+    updateUserLocation(lat, lng, false);
     if (showCurrentLocation) focusLocation(lat, lng, 18);
   }
 
@@ -314,12 +511,9 @@ function createMapHtml(preferences: MapPreferences) {
     const position = [lat, lng];
 
     if (!userMarker) {
-      userMarker = L.circleMarker(position, {
-        radius: 8,
-        color: '#ffffff',
-        weight: 3,
-        fillColor: '#4285F4',
-        fillOpacity: 1
+      userMarker = L.marker(position, {
+        icon: createUserLocationIcon(),
+        zIndexOffset: 2000
       });
 
       userMarker.bindPopup('Your location');
@@ -387,7 +581,7 @@ function createMapHtml(preferences: MapPreferences) {
   window.drawWalkingRoute = drawWalkingRoute;
   window.clearWalkingRoute = clearWalkingRoute;
 
-  setCampusData(initialLocations, null);
+  setCampusData(initialLocations, null, null);
 </script>
 </body>
 </html>`;
@@ -862,20 +1056,35 @@ export default function CampusMapScreen() {
     });
   }, [query, category]);
 
+  const mapLocations = useMemo(() => {
+    if (
+      !isNavigating ||
+      !selected ||
+      filtered.some(place => String(place.id) === String(selected.id))
+    ) {
+      return filtered;
+    }
+
+    return [...filtered, selected];
+  }, [filtered, isNavigating, selected]);
+
   // Update markers without reloading the map.
   useEffect(() => {
     if (!mapReady) return;
 
-    const data = JSON.stringify(filtered).replace(/</g, '\\u003c');
+    const data = JSON.stringify(mapLocations).replace(/</g, '\\u003c');
 
     const selectedId = JSON.stringify(
       selected ? String(selected.id) : null
     );
+    const destinationId = JSON.stringify(
+      isNavigating && selected ? String(selected.id) : null
+    );
 
     mapRef.current?.injectJavaScript(
-      `window.setCampusData(${data}, ${selectedId}); true;`
+      `window.setCampusData(${data}, ${selectedId}, ${destinationId}); true;`
     );
-  }, [filtered, selected, mapReady]);
+  }, [mapLocations, selected, isNavigating, mapReady]);
 
   useEffect(() => {
     if (!mapReady) return;

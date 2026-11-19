@@ -95,7 +95,7 @@ export default function WelcomeScreen() {
                 styles.guestButton,
                 pressed && styles.guestButtonPressed,
               ]}
-              onPress={() => router.replace('/map')}
+              onPress={() => router.replace('/explore')}
             >
               <Ionicons name="map-outline" size={18} color="#31506F" />
               <Text style={styles.guestButtonText}>Explore as guest</Text>

@@ -56,4 +56,8 @@ if (Platform.OS !== 'web') {
       supabase.auth.stopAutoRefresh();
     }
   });
+
+  if (AppState.currentState === 'active') {
+    supabase.auth.startAutoRefresh();
+  }
 }

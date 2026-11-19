@@ -97,7 +97,7 @@ export default function AuthScreen() {
         // If email confirmation is disabled, a session may
         // be returned immediately.
         Alert.alert('Account created', 'You are now signed in.');
-        router.replace('/map');
+        router.replace('/explore');
       } else {
         // Authenticate using the actual email and password.
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -111,7 +111,7 @@ export default function AuthScreen() {
           throw new Error('No active session was created. Please try again.');
         }
 
-        router.replace('/map');
+        router.replace('/explore');
       }
     } catch (error) {
       Alert.alert(
@@ -242,6 +242,16 @@ export default function AuthScreen() {
             )}
           </Pressable>
 
+          <Pressable
+            style={styles.guestButton}
+            onPress={() => router.replace('/explore')}
+            disabled={busy}
+            accessibilityRole="button"
+          >
+            <Ionicons name="map-outline" size={18} color="#31506F" />
+            <Text style={styles.guestButtonText}>Continue as guest</Text>
+          </Pressable>
+
           <View style={styles.notice}>
             <Ionicons
               name="cloud-outline"
@@ -353,6 +363,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 16,
+  },
+  guestButton: {
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    borderWidth: 1,
+    borderColor: '#D9E2EC',
+    borderRadius: 15,
+    marginTop: 10,
+  },
+  guestButtonText: {
+    color: '#31506F',
+    fontSize: 14,
+    fontWeight: '800',
   },
   notice: {
     flexDirection: 'row',

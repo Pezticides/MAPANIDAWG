@@ -1,11 +1,26 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { SettingsProvider, useSettings } from '../src/context/SettingsContext';
+
+function AppNavigation() {
+  const { resolvedTheme } = useSettings();
+
+  return (
+    <>
+      <StatusBar style={resolvedTheme === 'dark' ? 'light' : 'dark'} />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+        }}
+      />
+    </>
+  );
+}
 
 export default function RootLayout() {
   return (
-    <>
-      <StatusBar style="dark" />
-      <Stack screenOptions={{ headerShown: false, animation: 'fade' }} />
-    </>
+    <SettingsProvider>
+      <AppNavigation />
+    </SettingsProvider>
   );
 }

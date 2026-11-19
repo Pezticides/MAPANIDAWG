@@ -276,7 +276,6 @@ export default function SettingsScreen() {
         onPress: async () => {
           try {
             await signOutLocalProfile();
-            router.replace('/');
           } catch (error) {
             Alert.alert(
               'Could not sign out',
